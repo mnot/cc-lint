@@ -1,0 +1,13 @@
+*.pyc
+__pycache__
+.DS_Store
+/MANIFEST
+/dist
+/build
+/changelog.md
+/.coverage
+/.mypy_cache
+/.pytest_cache
+/.venv
+/*.egg-info
+/warc
