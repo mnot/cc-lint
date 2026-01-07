@@ -11,3 +11,5 @@ __pycache__
 /.venv
 /*.egg-info
 /warc
+/report.html
+/stats.json

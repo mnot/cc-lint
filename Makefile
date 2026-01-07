@@ -1,4 +1,4 @@
-PROJECT = cc-lint
+PROJECT = cc_lint
 CACHE_DIR = warc
 
 .PHONY: stats.json
