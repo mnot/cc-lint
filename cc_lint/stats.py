@@ -17,8 +17,114 @@ VARS_TO_TRACK = {
     'SINGLE_HEADER_REPEAT': ['field_name'],
     'CC_DUP': ['directive'],
     'STRUCTURED_FIELD_PARSE_ERROR': ['field_name', 'error'],
-    'BAD_CC_SYNTAX': ['bad_directive']
+    'BAD_CC_SYNTAX': ['bad_directive'],
+    'UNKNOWN_VALUE': ['field_name', 'value'],
+    'CROSS_ORIGIN_RESOURCE_POLICY_BAD_VALUE': ['value'],
+    'BAD_SYNTAX_DETAILED': ['field_name']
 }
+
+SAMPLES_TO_COLLECT = {
+    'BAD_SYNTAX': {
+        'field_name': [
+            'link',
+            'via',
+            'strict-transport-security',
+            'clear-site-data',
+            'content-md5',
+            'location',
+            'warning',
+            'content-range'
+        ]
+    },
+    'BAD_SYNTAX_DETAILED': {
+        'field_name': [
+            'link',
+            'via',
+            'strict-transport-security',
+            'clear-site-data',
+            'content-md5',
+            'location',
+            'warning',
+            'content-range'
+        ]
+    },
+    'VARY_COMPLEX': {
+        'vary_count': [
+            '6', '7', '8', '9', '10', '11', '12', '27'
+        ]
+    }
+}
+
+def get_note_value(note, var_name):
+    """
+    Helper to extract a variable value from a note.
+    """
+    val = None
+    if hasattr(note, 'vars') and var_name in note.vars:
+        val = note.vars[var_name]
+    elif hasattr(note, var_name):
+        val = getattr(note, var_name)
+    return val
+
+def create_sample(note, linter, var_name=None, val_str=None):
+    """
+    Helper to create a sample dictionary from a note.
+    Captures header values if var_name/val_str are provided and match logic.
+    """
+    sample_url = getattr(linter, 'base_uri', None)
+    if not sample_url:
+        return None
+
+    note_vars = {}
+    filtered_keys = ['vars', 'subnotes', 'subject', 'field_type', 'message_type']
+    for k, v in vars(note).items():
+        if k not in filtered_keys:
+            note_vars[k] = str(v)
+    if hasattr(note, 'vars'):
+        for k, v in note.vars.items():
+            if k not in filtered_keys:
+                note_vars[k] = str(v)
+
+    if var_name and val_str:
+        # Capture header values for context
+        if hasattr(linter, 'headers') and hasattr(linter.headers, 'text') and var_name == 'field_name':
+            target_field_name = val_str.lower()
+            values = []
+            for h_name, h_val in linter.headers.text:
+                h_name_str = h_name.decode('latin1', errors='replace') if isinstance(h_name, bytes) else str(h_name)
+                if h_name_str.lower() == target_field_name:
+                    h_val_str = h_val.decode('latin1', errors='replace') if isinstance(h_val, bytes) else str(h_val)
+                    values.append(h_val_str)
+            if values:
+                note_vars['field_values'] = repr(values)
+    
+    return {'url': sample_url, 'vars': note_vars}
+
+def iter_tracked_vars(note):
+    """
+    Yields (var_name, val_str) for tracked variables in the note.
+    """
+    note_id = note.__class__.__name__
+    if note_id in VARS_TO_TRACK:
+        for var_name in VARS_TO_TRACK[note_id]:
+            val = get_note_value(note, var_name)
+            if val is not None:
+                yield var_name, str(val)
+
+def iter_collected_samples(note, linter):
+    """
+    Yields (var_name, val_str, sample_dict) for samples to be collected.
+    """
+    note_id = note.__class__.__name__
+    if note_id in SAMPLES_TO_COLLECT:
+        for var_name, target_values in SAMPLES_TO_COLLECT[note_id].items():
+            val = get_note_value(note, var_name)
+            if val is not None:
+                val_str = str(val)
+                if val_str.lower() in target_values:
+                    sample = create_sample(note, linter, var_name, val_str)
+                    if sample:
+                        yield var_name, val_str, sample
 
 class StatsCollector:
     def __init__(self):
@@ -45,22 +151,29 @@ class StatsCollector:
             self.note_data[note_id]['count'] += 1
             
             # Track variable statistics
-            if note_id in VARS_TO_TRACK:
-                for var_name in VARS_TO_TRACK[note_id]:
-                    val = None
-                    if hasattr(note, 'vars') and var_name in note.vars:
-                        val = note.vars[var_name]
-                    elif hasattr(note, var_name):
-                        val = getattr(note, var_name)
-                    
-                    if val is not None:
-                        val_str = str(val)
-                        if var_name not in self.note_data[note_id]['vars']:
-                            self.note_data[note_id]['vars'][var_name] = {}
+            for var_name, val_str in iter_tracked_vars(note):
+                if var_name not in self.note_data[note_id]['vars']:
+                    self.note_data[note_id]['vars'][var_name] = {}
+                
+                if val_str not in self.note_data[note_id]['vars'][var_name]:
+                    self.note_data[note_id]['vars'][var_name][val_str] = 0
+                self.note_data[note_id]['vars'][var_name][val_str] += 1
                         
-                        if val_str not in self.note_data[note_id]['vars'][var_name]:
-                            self.note_data[note_id]['vars'][var_name][val_str] = 0
-                        self.note_data[note_id]['vars'][var_name][val_str] += 1
+            # Collect detailed samples
+            for var_name, val_str, sample in iter_collected_samples(note, linter):
+                if 'var_samples' not in self.note_data[note_id]:
+                    self.note_data[note_id]['var_samples'] = {}
+                if var_name not in self.note_data[note_id]['var_samples']:
+                    self.note_data[note_id]['var_samples'][var_name] = {}
+                if val_str not in self.note_data[note_id]['var_samples'][var_name]:
+                    self.note_data[note_id]['var_samples'][var_name][val_str] = []
+                
+                # Check limit (15)
+                current_samples = self.note_data[note_id]['var_samples'][var_name][val_str]
+                if len(current_samples) < 15:
+                    # Check uniqueness
+                    if sample['url'] not in [s['url'] for s in current_samples]:
+                        current_samples.append(sample)
             
             sample_url = getattr(linter, 'base_uri', None)
             if sample_url and len(self.note_data[note_id]['samples']) < 5:

@@ -15,7 +15,7 @@ import logging
 from cc_lint.crawling import get_warc_stream, iter_warc_records
 from cc_lint.linting import lint_record
 from httplint.note import levels
-from cc_lint.stats import VARS_TO_TRACK
+from cc_lint.stats import VARS_TO_TRACK, SAMPLES_TO_COLLECT, iter_tracked_vars, iter_collected_samples, create_sample
 
 from httplint.field.finder import UnknownHttpField
 
@@ -74,36 +74,27 @@ class CCLintJob(MRJob):
                             
                             # Var stats
                             var_stats = {}
-                            if note_id in VARS_TO_TRACK:
-                                for var_name in VARS_TO_TRACK[note_id]:
-                                    val = None
-                                    if hasattr(note, 'vars') and var_name in note.vars:
-                                        val = note.vars[var_name]
-                                    elif hasattr(note, var_name):
-                                        val = getattr(note, var_name)
-                                    
-                                    if val is not None:
-                                        if var_name not in var_stats:
-                                            var_stats[var_name] = {}
-                                        val_str = str(val)
-                                        var_stats[var_name][val_str] = 1
+                            for var_name, val_str in iter_tracked_vars(note):
+                                if var_name not in var_stats:
+                                    var_stats[var_name] = {}
+                                var_stats[var_name][val_str] = 1
+
+                            # Variable samples
+                            var_samples = {}
+                            for var_name, val_str, sample in iter_collected_samples(note, linter):
+                                if var_name not in var_samples:
+                                    var_samples[var_name] = {}
+                                if val_str not in var_samples[var_name]:
+                                    var_samples[var_name][val_str] = []
+                                var_samples[var_name][val_str].append(sample)
 
                             # yield dictionary with count and sample url
-                            sample_url = getattr(linter, 'base_uri', None)
-                            if sample_url:
-                                note_vars = {}
-                                filtered_keys = ['vars', 'subnotes', 'subject', 'field_type', 'message_type']
-                                for k, v in vars(note).items():
-                                    if k not in filtered_keys:
-                                        note_vars[k] = str(v)
-                                if hasattr(note, 'vars'):
-                                    for k, v in note.vars.items():
-                                        if k not in filtered_keys:
-                                            note_vars[k] = str(v)
-                                samples = [{'url': sample_url, 'vars': note_vars}]
+                            sample = create_sample(note, linter)
+                            if sample:
+                                samples = [sample]
                             else:
                                 samples = []
-                            yield (note_id, {'c': 1, 's': samples, 'v': var_stats})
+                            yield (note_id, {'c': 1, 's': samples, 'v': var_stats, 'vs': var_samples})
                         yield ("_TOTAL_RESPONSES", {'c': 1, 's': [], 'v': {}})
                         
                         # Yield field counts
@@ -149,6 +140,7 @@ class CCLintJob(MRJob):
         total_count = 0
         samples = []
         var_stats = {} # {var_name: {val_str: count}}
+        var_samples = {} # {var_name: {val_str: [samples]}}
         field_counts = {}
         unprocessed_counts = {}
 
@@ -171,6 +163,21 @@ class CCLintJob(MRJob):
                     if val_str not in var_stats[var_name]:
                         var_stats[var_name][val_str] = 0
                     var_stats[var_name][val_str] += count
+
+            # Merge var samples
+            v_samples = v.get('vs', {})
+            for var_name, val_dict in v_samples.items():
+                if var_name not in var_samples:
+                    var_samples[var_name] = {}
+                for val_str, s_list in val_dict.items():
+                     if val_str not in var_samples[var_name]:
+                         var_samples[var_name][val_str] = []
+                     # Merge and limit
+                     current = var_samples[var_name][val_str]
+                     existing_urls = [x['url'] for x in current]
+                     for s in s_list:
+                         if s['url'] not in existing_urls and len(current) < 15:
+                             current.append(s)
             
             # Merge field counts
             f_counts = v.get('fields', {})
@@ -186,7 +193,7 @@ class CCLintJob(MRJob):
                     unprocessed_counts[f_name] = 0
                 unprocessed_counts[f_name] += count
 
-        out = {'c': total_count, 's': samples, 'v': var_stats}
+        out = {'c': total_count, 's': samples, 'v': var_stats, 'vs': var_samples}
         if field_counts:
             out['fields'] = field_counts
         if unprocessed_counts:
@@ -200,6 +207,7 @@ class CCLintJob(MRJob):
         total_count = 0
         samples = []
         var_stats = {}
+        var_samples = {}
         field_counts = {}
         unprocessed_counts = {}
 
@@ -216,9 +224,23 @@ class CCLintJob(MRJob):
                 if var_name not in var_stats:
                     var_stats[var_name] = {}
                 for val_str, count in counts.items():
-                    if val_str not in var_stats[var_name]:
                         var_stats[var_name][val_str] = 0
                     var_stats[var_name][val_str] += count
+
+            # Merge var samples
+            v_samples = v.get('vs', {})
+            for var_name, val_dict in v_samples.items():
+                if var_name not in var_samples:
+                    var_samples[var_name] = {}
+                for val_str, s_list in val_dict.items():
+                     if val_str not in var_samples[var_name]:
+                         var_samples[var_name][val_str] = []
+                     # Merge and limit
+                     current = var_samples[var_name][val_str]
+                     existing_urls = [x['url'] for x in current]
+                     for s in s_list:
+                         if s['url'] not in existing_urls and len(current) < 15:
+                             current.append(s)
             
             # Merge field counts
             f_counts = v.get('fields', {})
@@ -246,7 +268,7 @@ class CCLintJob(MRJob):
              else:
                  yield (note_id, total_count)
         else:
-             yield (note_id, {'count': total_count, 'samples': samples, 'vars': var_stats})
+             yield (note_id, {'count': total_count, 'samples': samples, 'vars': var_stats, 'var_samples': var_samples})
 
 if __name__ == '__main__':
     CCLintJob.run()
