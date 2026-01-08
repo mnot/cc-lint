@@ -9,6 +9,9 @@ from .stats import StatsCollector
 from .report import generate_report
 
 
+from .top_sites import get_top_sites_path, load_top_sites, is_in_top_sites
+
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,13 +36,27 @@ def cli() -> None:
 @click.option(
     "--cache-dir", default=None, help="Directory to cache downloaded WARC files"
 )
-def lint_cc(
-    paths_file: str, limit: int, output: str, record_limit: int, cache_dir: Optional[str]
+@click.option(
+    "--top-sites", type=int, default=None, help="Filter records to top N websites"
+)
+def lint_cc(  # pylint: disable=too-many-positional-arguments
+    paths_file: str,
+    limit: int,
+    output: str,
+    record_limit: int,
+    cache_dir: Optional[str],
+    top_sites: Optional[int],
 ) -> None:
     """
     Run httplint on Common Crawl WARC files.
     """
     stats = StatsCollector()
+
+    tranco_path = None
+    if top_sites:
+        # Use cache_dir or a temporary one
+        ts_cache = cache_dir if cache_dir else "tranco_cache"
+        tranco_path = get_top_sites_path(ts_cache)
 
     # Read paths file
     # This assumes paths_file is local for now, or we can add logic to fetch from S3
@@ -61,7 +78,14 @@ def lint_cc(
 
     logger.info("Found %s WARC paths. Processing first %s.", len(warc_paths), limit)
 
+
+
+    # Run local loop
     count = 0
+    top_sites_set = None
+    if top_sites and tranco_path:
+        top_sites_set = load_top_sites(tranco_path, top_sites)
+
     for warc_path in warc_paths:
         if count >= limit:
             break
@@ -76,10 +100,19 @@ def lint_cc(
                 record_count += 1
                 try:
                     linter = lint_record(record)
-                    if linter:
-                        stats.process_linter(linter)
                 except Exception as exc:  # pylint: disable=broad-except
                     logger.warning("Error linting record in %s: %s", warc_path, exc)
+                    continue
+
+                if not linter:
+                    continue
+
+                # Filter by top sites if enabled
+                if top_sites_set is not None:
+                    if not is_in_top_sites(linter.base_uri, top_sites_set):
+                        continue
+
+                stats.process_linter(linter)
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Error streaming %s: %s", warc_path, exc)
 

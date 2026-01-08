@@ -1,6 +1,7 @@
 
 import logging
-from typing import Iterator, Any, Dict, List
+
+from typing import Iterator, Any, Dict, List, Set, Optional
 
 import cc_lint.patches  # pylint: disable=wrong-import-order,unused-import
 from mrjob.job import MRJob  # type: ignore
@@ -8,6 +9,7 @@ from mrjob.protocol import TextProtocol, JSONProtocol  # type: ignore
 from httplint.note import levels
 from httplint.field.finder import UnknownHttpField
 from cc_lint.types import SampleType, MRJobAggregateType
+from cc_lint.top_sites import load_top_sites, is_in_top_sites
 
 from cc_lint.crawling import get_warc_stream, iter_warc_records
 from cc_lint.linting import lint_record
@@ -70,6 +72,10 @@ class CCLintJob(MRJob):  # pylint: disable=abstract-method
     INPUT_PROTOCOL = TextProtocol
     OUTPUT_PROTOCOL = JSONProtocol
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.top_domains: Optional[Set[str]] = None
+
     def configure_args(self) -> None:
         super().configure_args()
         self.add_passthru_arg(
@@ -87,6 +93,22 @@ class CCLintJob(MRJob):  # pylint: disable=abstract-method
         self.add_passthru_arg(
             "--cache-dir", default=None, help="Directory to cache WARC files"
         )
+        self.add_passthru_arg(
+            "--top-sites", type=int, default=None, help="Filter to top N sites"
+        )
+        self.add_passthru_arg(
+            "--tranco-path", default=None, help="Path to Tranco CSV"
+        )
+
+    def mapper_init(self) -> None:
+        """
+        Initialize mapper with top sites list if needed.
+        """
+        # self.top_domains initialized in __init__
+        if self.options.top_sites and self.options.tranco_path:
+            self.top_domains = load_top_sites(
+                self.options.tranco_path, self.options.top_sites
+            )
 
     def _process_record(self, record: Any) -> Iterator[tuple[str, Dict[str, Any]]]:
         """
@@ -95,6 +117,11 @@ class CCLintJob(MRJob):  # pylint: disable=abstract-method
         linter = lint_record(record)
         if not linter:
             return
+
+        # Filter by top sites if enabled
+        if self.top_domains is not None:
+            if not is_in_top_sites(linter.base_uri, self.top_domains):
+                return
 
         for note in linter.notes:
             if note.level not in [levels.WARN, levels.BAD]:
