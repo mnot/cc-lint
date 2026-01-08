@@ -1,24 +1,26 @@
 import json
 import html
 import urllib.parse
+from typing import Dict, List, Any, Set, Iterable
 from httplint.note import Note, levels
+from cc_lint.types import NoteDataType
 
 
-def _get_unprocessed_ids(unprocessed_counts):
+def _get_unprocessed_ids(unprocessed_counts: Dict[str, int]) -> List[tuple[str, int]]:
     return sorted(
         unprocessed_counts.items(), key=lambda item: item[1], reverse=True
     )[:50]
 
 
-def _format_var_string(note_vars):
+def _format_var_string(note_vars: Dict[str, Any]) -> str:
     if not note_vars:
         return ""
     items = [f"{k}={html.escape(str(v))}" for k, v in note_vars.items()]
     return f' <span style="color: #666; font-size: 0.9em;">({", ".join(items)})</span>'
 
 
-def _generate_unsupported_section(unprocessed_counts):
-    content = []
+def _generate_unsupported_section(unprocessed_counts: Dict[str, int]) -> List[str]:
+    content: List[str] = []
     if unprocessed_counts:
         content.append('<div id="unprocessed">')
         content.append("    <h2>Top 50 Unsupported Headers</h2>")
@@ -38,8 +40,10 @@ def _generate_unsupported_section(unprocessed_counts):
     return content
 
 
-def _generate_variable_stats(note_data, field_counts):
-    content = []
+def _generate_variable_stats(
+    note_data: NoteDataType, field_counts: Dict[str, int]
+) -> List[str]:
+    content: List[str] = []
     var_stats = note_data.get("vars", {})
     if not var_stats:
         return content
@@ -86,7 +90,9 @@ def _generate_variable_stats(note_data, field_counts):
     return content
 
 
-def _generate_sample_rows(note_data, var_name, val, is_field_name):
+def _generate_sample_rows(
+    note_data: NoteDataType, var_name: str, val: str, is_field_name: bool
+) -> List[str]:
     content = []
     var_samples = note_data.get("var_samples", {}).get(var_name, {})
     if val in var_samples:
@@ -123,7 +129,7 @@ def _generate_sample_rows(note_data, var_name, val, is_field_name):
     return content
 
 
-def _generate_notes_section(notes, field_counts):
+def _generate_notes_section(notes: Dict[str, Any], field_counts: Dict[str, int]) -> List[str]:
     content = ['<div id="notes">']
     sorted_notes = sorted(
         notes.items(),
@@ -134,7 +140,7 @@ def _generate_notes_section(notes, field_counts):
     for note_id, note_data in sorted_notes:
         if isinstance(note_data, int):
             count, samples = note_data, []
-            note_data = {}  # Empty dict to prevent errors if used later
+            note_data = {}
         else:
             count = note_data.get("count", 0)
             samples = note_data.get("samples", [])
@@ -169,13 +175,13 @@ def _generate_notes_section(notes, field_counts):
     return content
 
 
-def _get_all_subclasses(cls):
+def _get_all_subclasses(cls: Any) -> Set[Any]:
     return set(cls.__subclasses__()).union(
         [s for c in cls.__subclasses__() for s in _get_all_subclasses(c)]
     )
 
 
-def _generate_missing_notes_section(seen_notes_keys):
+def _generate_missing_notes_section(seen_notes_keys: Iterable[str]) -> List[str]:
     content = []
     all_notes = _get_all_subclasses(Note)
     possible_notes = set()
@@ -199,7 +205,7 @@ def _generate_missing_notes_section(seen_notes_keys):
     return content
 
 
-def generate_report(stats_file, output_file):
+def generate_report(stats_file: str, output_file: str) -> None:
     """
     Generates an HTML report from stats.json.
     """

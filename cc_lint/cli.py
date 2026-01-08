@@ -1,6 +1,7 @@
 import json
 import gzip
 import logging
+from typing import Optional
 import click
 from .crawling import get_warc_stream, iter_warc_records
 from .linting import lint_record
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @click.group()
-def cli():
+def cli() -> None:
     pass
 
 
@@ -32,7 +33,9 @@ def cli():
 @click.option(
     "--cache-dir", default=None, help="Directory to cache downloaded WARC files"
 )
-def lint_cc(paths_file, limit, output, record_limit, cache_dir):
+def lint_cc(
+    paths_file: str, limit: int, output: str, record_limit: int, cache_dir: Optional[str]
+) -> None:
     """
     Run httplint on Common Crawl WARC files.
     """
@@ -92,7 +95,7 @@ def lint_cc(paths_file, limit, output, record_limit, cache_dir):
 @cli.command(name="report")
 @click.option("--input", "input_file", required=True, help="Input stats.json file")
 @click.option("--output", required=True, help="Output HTML file")
-def report_cc(input_file, output):
+def report_cc(input_file: str, output: str) -> None:
     """
     Generate an HTML report from statistics.
     """

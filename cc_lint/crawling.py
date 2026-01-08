@@ -1,12 +1,13 @@
 import os
 import shutil
 import logging
+from typing import Iterator, Any
 import requests
 import boto3
-from warcio.archiveiterator import ArchiveIterator
+from warcio.archiveiterator import ArchiveIterator  # type: ignore
 
 
-def get_warc_stream_http(path):
+def get_warc_stream_http(path: str) -> Any:
     """
     Yields a stream of the object body from data.commoncrawl.org via HTTP.
     """
@@ -20,7 +21,7 @@ def get_warc_stream_http(path):
     return response.raw
 
 
-def get_warc_stream_s3(path):
+def get_warc_stream_s3(path: str) -> Any:
     """
     Yields a stream from S3. Requires credentials or correct config for Requester Pays if needed.
     """
@@ -29,7 +30,7 @@ def get_warc_stream_s3(path):
     return obj["Body"]
 
 
-def get_warc_stream(path, use_s3=False, cache_dir=None):
+def get_warc_stream(path: str, use_s3: bool = False, cache_dir: str | None = None) -> Any:
     if not cache_dir:
         # Stream directly if no cache
         if use_s3:
@@ -77,7 +78,7 @@ def get_warc_stream(path, use_s3=False, cache_dir=None):
     return open(local_path, "rb")
 
 
-def iter_warc_records(stream):
+def iter_warc_records(stream: Any) -> Iterator[Any]:
     """
     Iterates over WARC records from a stream.
     """

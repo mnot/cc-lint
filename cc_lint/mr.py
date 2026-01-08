@@ -1,21 +1,13 @@
-# pylint: disable=abstract-method
-import sys
-import shlex
-import types
+
 import logging
+from typing import Iterator, Any, Dict, List
 
-# Monkeypatch pipes for Python 3.13 (mrjob compatibility)
-if sys.version_info >= (3, 13):
-    if "pipes" not in sys.modules:
-        pipes = types.ModuleType("pipes")
-        pipes.quote = shlex.quote
-        sys.modules["pipes"] = pipes
-
-# pylint: disable=wrong-import-position
-from mrjob.job import MRJob
-from mrjob.protocol import TextProtocol, JSONProtocol
+import cc_lint.patches  # pylint: disable=wrong-import-order,unused-import
+from mrjob.job import MRJob  # type: ignore
+from mrjob.protocol import TextProtocol, JSONProtocol  # type: ignore
 from httplint.note import levels
 from httplint.field.finder import UnknownHttpField
+from cc_lint.types import SampleType, MRJobAggregateType
 
 from cc_lint.crawling import get_warc_stream, iter_warc_records
 from cc_lint.linting import lint_record
@@ -31,7 +23,7 @@ logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-def _merge_counts(target, source):
+def _merge_counts(target: Dict[str, int], source: Dict[str, int]) -> None:
     """
     Helper to merge counts dictionaries.
     """
@@ -41,7 +33,7 @@ def _merge_counts(target, source):
         target[key] += count
 
 
-def _merge_nested_stats(target, source):
+def _merge_nested_stats(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     """
     Helper to merge nested stats {name: {val: count}}.
     """
@@ -51,7 +43,7 @@ def _merge_nested_stats(target, source):
         _merge_counts(target[name], counts)
 
 
-def _merge_samples(target, source, limit=15):
+def _merge_samples(target: Dict[str, Any], source: Dict[str, Any], limit: int = 15) -> None:
     """
     Helper to merge sample lists {name: {val: [samples]}}.
     """
@@ -71,14 +63,14 @@ def _merge_samples(target, source, limit=15):
                     existing_urls.add(s_obj["url"])
 
 
-class CCLintJob(MRJob):
+class CCLintJob(MRJob):  # pylint: disable=abstract-method
 
     # Input Protocol: We read paths (lines of text).
     # Output Protocol: We output JSON stats (NoteID, count).
     INPUT_PROTOCOL = TextProtocol
     OUTPUT_PROTOCOL = JSONProtocol
 
-    def configure_args(self):
+    def configure_args(self) -> None:
         super().configure_args()
         self.add_passthru_arg(
             "--use-s3",
@@ -96,7 +88,7 @@ class CCLintJob(MRJob):
             "--cache-dir", default=None, help="Directory to cache WARC files"
         )
 
-    def _process_record(self, record):
+    def _process_record(self, record: Any) -> Iterator[tuple[str, Dict[str, Any]]]:
         """
         Lint a single record and yield intermediate results.
         """
@@ -111,14 +103,14 @@ class CCLintJob(MRJob):
             note_id = note.__class__.__name__
 
             # Var stats
-            var_stats = {}
+            var_stats: Dict[str, Dict[str, int]] = {}
             for var_name, val_str in iter_tracked_vars(note):
                 if var_name not in var_stats:
                     var_stats[var_name] = {}
                 var_stats[var_name][val_str] = 1
 
             # Variable samples
-            var_samples = {}
+            var_samples: Dict[str, Dict[str, List[SampleType]]] = {}
             for var_name, val_str, sample in iter_collected_samples(note, linter):
                 if var_name not in var_samples:
                     var_samples[var_name] = {}
@@ -127,30 +119,32 @@ class CCLintJob(MRJob):
                 var_samples[var_name][val_str].append(sample)
 
             # yield dictionary with count and sample url
-            sample = create_sample(note, linter)
-            samples = [sample] if sample else []
+            note_sample = create_sample(note, linter)
+            samples: List[SampleType] = []
+            if note_sample:
+                samples.append(note_sample)
 
             yield (
                 note_id,
                 {
-                    "c": 1,
-                    "s": samples,
-                    "v": var_stats,
-                    "vs": var_samples,
+                    "count": 1,
+                    "samples": samples,
+                    "vars": var_stats,
+                    "var_samples": var_samples,
                 },
             )
 
-        yield ("_TOTAL_RESPONSES", {"c": 1, "s": [], "v": {}})
+        yield ("_TOTAL_RESPONSES", {"count": 1, "samples": [], "vars": {}})
 
         # Yield field counts
         self._process_field_counts(linter)
 
-    def _process_field_counts(self, linter):
+    def _process_field_counts(self, linter: Any) -> Iterator[tuple[str, Dict[str, Any]]]:
         """
         Extract field counts and valid/invalid header counts from linter.
         """
-        field_counts = {}
-        unprocessed_counts = {}
+        field_counts: Dict[str, int] = {}
+        unprocessed_counts: Dict[str, int] = {}
 
         if hasattr(linter, "headers") and hasattr(linter.headers, "text"):
             # field counts
@@ -172,16 +166,16 @@ class CCLintJob(MRJob):
             yield (
                 "_FIELD_COUNTS",
                 {
-                    "c": 0,
-                    "s": [],
-                    "v": {},
+                    "count": 0,
+                    "samples": [],
+                    "vars": {},
                     "fields": field_counts,
                     "unprocessed": unprocessed_counts,
                 },
             )
 
-    # pylint: disable=abstract-method
-    def mapper(self, _, value):
+
+    def mapper(self, _: Any, value: Any) -> Iterator[tuple[str, Dict[str, Any]]]:
         """
         Mapper: Takes a WARC path, streams it, lints records, emits (NoteID, 1).
         """
@@ -206,19 +200,19 @@ class CCLintJob(MRJob):
                 except Exception as exc:  # pylint: disable=broad-except
                     # Log but continue
                     logger.warning("Error linting record in %s: %s", warc_path, exc)
-                    yield ("_ERROR_LINTING", {"c": 1, "s": [], "v": {}})
+                    yield ("_ERROR_LINTING", {"count": 1, "samples": [], "vars": {}})
 
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Error streaming %s: %s", warc_path, exc)
-            yield ("_ERROR_STREAMING", {"c": 1, "s": [], "v": {}})
+            yield ("_ERROR_STREAMING", {"count": 1, "samples": [], "vars": {}})
 
-    def combiner(self, key, values):
+    def combiner(self, key: str, values: Iterator[Any]) -> Iterator[tuple[str, Any]]:
         """
         Combiner: Sums counts locally and keeps up to 5 sample URLs.
         """
         yield (key, self._aggregate_values(values, sample_limit=5))
 
-    def reducer(self, key, values):
+    def reducer(self, key: str, values: Iterator[Any]) -> Iterator[tuple[str, Any]]:
         """
         Reducer: Sums counts globally and keeps up to 5 sample URLs.
         """
@@ -229,48 +223,55 @@ class CCLintJob(MRJob):
                 yield ("field_counts", agg.get("fields", {}))
                 yield ("unprocessed_counts", agg.get("unprocessed", {}))
             elif key == "_TOTAL_RESPONSES":
-                yield ("total_responses", agg["c"])
+                yield ("total_responses", agg["count"])
             else:
-                yield (key, agg["c"])
+                yield (key, agg["count"])
         else:
             yield (
                 key,
                 {
-                    "count": agg["c"],
-                    "samples": agg["s"],
-                    "vars": agg["v"],
-                    "var_samples": agg["vs"],
+                    "count": agg["count"],
+                    "samples": agg["samples"],
+                    "vars": agg["vars"],
+                    "var_samples": agg["var_samples"],
                 },
             )
 
-    def _aggregate_values(self, values, sample_limit=5):
+    def _aggregate_values(
+        self, values: Iterator[Dict[str, Any]], sample_limit: int = 5
+    ) -> MRJobAggregateType:
         """
         Aggregate a stream of value dicts.
         """
         total_count = 0
-        samples = []
-        var_stats = {}
-        var_samples = {}
-        field_counts = {}
-        unprocessed_counts = {}
+        samples: List[SampleType] = []
+        var_stats: Dict[str, Any] = {}
+        var_samples: Dict[str, Any] = {}
+        field_counts: Dict[str, int] = {}
+        unprocessed_counts: Dict[str, int] = {}
 
         for val in values:
-            total_count += val["c"]
+            total_count += val["count"]
 
             # Merge Samples
             existing_urls = {x["url"] for x in samples}
-            for sample_obj in val.get("s", []):
+            for sample_obj in val.get("samples", []):
                 if sample_obj["url"] not in existing_urls and len(samples) < sample_limit:
                     samples.append(sample_obj)
                     existing_urls.add(sample_obj["url"])
 
             # Merge Stats
-            _merge_nested_stats(var_stats, val.get("v", {}))
-            _merge_samples(var_samples, val.get("vs", {}), limit=15)
+            _merge_nested_stats(var_stats, val.get("vars", {}))
+            _merge_samples(var_samples, val.get("var_samples", {}), limit=15)
             _merge_counts(field_counts, val.get("fields", {}))
             _merge_counts(unprocessed_counts, val.get("unprocessed", {}))
 
-        out = {"c": total_count, "s": samples, "v": var_stats, "vs": var_samples}
+        out: MRJobAggregateType = {
+            "count": total_count,
+            "samples": samples,
+            "vars": var_stats,
+            "var_samples": var_samples,
+        }
         if field_counts:
             out["fields"] = field_counts
         if unprocessed_counts:

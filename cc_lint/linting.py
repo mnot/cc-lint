@@ -1,8 +1,9 @@
+from typing import Optional, Any
 from dateutil.parser import parse
 from httplint import HttpResponseLinter
 
 
-def lint_record(record):
+def lint_record(record: Any) -> Optional[HttpResponseLinter]:
     """
     Lints a WARC record using httplint.
     Returns the linter object populate with notes, or None if not a response.
