@@ -3,7 +3,7 @@ CACHE_DIR = warc
 
 .PHONY: stats.json
 stats.json:
-	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt > $@
+	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 10 --cache-dir $(CACHE_DIR) --paths-file paths.txt > $@
 
 .PHONY: report.html
 report.html:

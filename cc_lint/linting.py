@@ -1,23 +1,111 @@
 from typing import Optional, Any
+import json
 from dateutil.parser import parse
 from httplint import HttpResponseLinter
 
 
 def lint_record(record: Any) -> Optional[HttpResponseLinter]:
     """
-    Lints a WARC record using httplint.
-    Returns the linter object populate with notes, or None if not a response.
+    Lints a WARC record or WAT metadata using httplint.
+    Returns the linter object populated with notes, or None if not a response.
     """
-    if record.rec_type != "response":
+    if record.rec_type == "metadata":
+        return _lint_wat_record(record)
+
+    if record.rec_type == "response":
+        return _lint_warc_record(record)
+
+    return None
+
+
+def _lint_wat_record(record: Any) -> Optional[HttpResponseLinter]:
+    """
+    Parse a WAT metadata record.
+    """
+    try:
+        content = record.content_stream().read()
+        data = json.loads(content)
+    except Exception:  # pylint: disable=broad-except
         return None
 
-    # Extract status line and headers
-    # warcio records present headers as list of tuples or similar
-    # httplint expects raw bytes or structured data.
-    # Let's see how ResponseLinter is initialized.
-    # It usually takes `process_response_top(protocol, status_code, status_phrase)`
-    # and `process_headers(headers)`.
+    response_meta = (
+        data.get("Envelope", {})
+        .get("Payload-Metadata", {})
+        .get("HTTP-Response-Metadata")
+    )
+    if not response_meta:
+        return None
 
+    linter = HttpResponseLinter(no_content=True)
+
+    # Base URI
+    warc_header_meta = data.get("Envelope", {}).get("WARC-Header-Metadata", {})
+    target_uri = warc_header_meta.get("WARC-Target-URI")
+    if target_uri:
+        linter.base_uri = target_uri
+
+    # Date
+    warc_date = warc_header_meta.get("WARC-Date")
+    if warc_date:
+        try:
+            dt = parse(warc_date)
+            linter.start_time = dt.timestamp()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    # Status Line
+    response_message = response_meta.get("Response-Message")
+    if isinstance(response_message, dict):
+        status_code = response_message.get("Status")
+        status_phrase = response_message.get("Reason", "")
+        protocol = response_message.get("Version", "HTTP/1.1")
+    else:
+        # Fallback or error
+        status_code = None
+        status_phrase = ""
+        protocol = "HTTP/1.1"
+
+    linter.process_response_topline(
+        protocol.encode("latin1", errors="replace"),
+        str(status_code).encode("ascii", errors="replace"),
+        str(status_phrase).encode("latin1", errors="replace"),
+    )
+
+    # Headers
+    # response_meta["Headers"] might be a Dict[str, str] or similar.
+    # If duplicates exist, WAT might use list?
+    json_headers = response_meta.get("Headers", {})
+    headers = []
+    if isinstance(json_headers, dict):
+        for name, val in json_headers.items():
+            # If val is list, iterate?
+            if isinstance(val, list):
+                for item in val:
+                    headers.append(
+                        (
+                            name.encode("latin1", errors="replace"),
+                            str(item).encode("latin1", errors="replace"),
+                        )
+                    )
+            else:
+                headers.append(
+                    (
+                        name.encode("latin1", errors="replace"),
+                        str(val).encode("latin1", errors="replace"),
+                    )
+                )
+
+    linter.process_headers(headers)
+    linter.finish_content(True)
+
+    return linter
+
+
+def _lint_warc_record(record: Any) -> Optional[HttpResponseLinter]:
+    """
+    Parse a standard WARC response record.
+    """
+    # Extract status line and headers
     linter = HttpResponseLinter()
 
     # Set Request URL (base_uri)
@@ -26,19 +114,15 @@ def lint_record(record: Any) -> Optional[HttpResponseLinter]:
         linter.base_uri = target_uri
 
     # Set Request Time (start_time)
-    # WARC-Date is ISO8601, e.g., 2023-12-05T16:10:51Z
     warc_date = record.rec_headers.get_header("WARC-Date")
     if warc_date:
         try:
-            # dateutil handles iso8601 nicely
             dt = parse(warc_date)
             linter.start_time = dt.timestamp()
         except Exception:  # pylint: disable=broad-except
-            # Fallback or ignore if date parse fails
             pass
 
-    # Protocol, status code, phrase from HTTP header
-    # warcio http_headers object has statusline
+    # Protocol, status code, phrase
     http_headers = record.http_headers
     if not http_headers:
         return None
@@ -46,23 +130,15 @@ def lint_record(record: Any) -> Optional[HttpResponseLinter]:
     # Protocol
     protocol = http_headers.protocol
     if not protocol:
-        protocol = "HTTP/1.1"  # Default or fallback
+        protocol = "HTTP/1.1"
 
     # Status Code
     status_code = http_headers.get_statuscode()
 
     # Reason Phrase
-    # statusline usually is "200 OK" or "HTTP/1.1 200 OK" depending on how it's stored?
-    # warcio statusline property usually returns the full line or the part after protocol?
-    # In my debug output: "Status line: 200 OK"
-    # So it seems to exclude protocol?
-
-    # Let's simple split the statusline.
-    # If statusline is '200 OK', then:
     parts = http_headers.statusline.split(" ", 1)
     if len(parts) == 2:
         _, status_phrase = parts
-        # sanity check if found_code matches status_code
     else:
         status_phrase = ""
 
@@ -73,7 +149,6 @@ def lint_record(record: Any) -> Optional[HttpResponseLinter]:
     )
 
     # Headers
-    # httplint expects headers as a list of (name, value) tuples, both bytes.
     headers = []
     for name, value in http_headers.headers:
         headers.append(
@@ -86,8 +161,6 @@ def lint_record(record: Any) -> Optional[HttpResponseLinter]:
     linter.process_headers(headers)
 
     # Body
-    # We can feed the body in chunks
-    # record.content_stream() gives us a stream
     chunk_size = 8192
     stream = record.content_stream()
     while True:

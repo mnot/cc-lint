@@ -31,6 +31,12 @@ def get_warc_stream_s3(path: str) -> Any:
 
 
 def get_warc_stream(path: str, use_s3: bool = False, cache_dir: str | None = None) -> Any:
+    # Convert WARC paths to WAT paths
+    if "/warc/" in path:
+        path = path.replace("/warc/", "/wat/")
+    if path.endswith(".warc.gz"):
+        path = path.replace(".warc.gz", ".warc.wat.gz")
+
     if not cache_dir:
         # Stream directly if no cache
         if use_s3:
