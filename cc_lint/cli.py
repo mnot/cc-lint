@@ -1,7 +1,7 @@
 import json
 import gzip
 import logging
-from typing import Optional
+from typing import Optional, Set
 import click
 from .crawling import get_warc_stream, iter_warc_records
 from .linting import lint_record
@@ -86,24 +86,45 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
     if top_sites and tranco_path:
         top_sites_set = load_top_sites(tranco_path, top_sites)
 
-    for warc_path in warc_paths:
-        if count >= limit:
-            break
+    try:
+        for warc_path in warc_paths:
+            if count >= limit:
+                break
 
-        logger.info("Processing %s", warc_path)
-        try:
-            stream = get_warc_stream(warc_path, cache_dir=cache_dir)
-            record_count = 0
-            for record in iter_warc_records(stream):
-                if 0 < record_limit <= record_count:
-                    break
-                record_count += 1
-                try:
-                    linter = lint_record(record)
-                except Exception as exc:  # pylint: disable=broad-except
-                    logger.warning("Error linting record in %s: %s", warc_path, exc)
-                    continue
+            _process_single_warc(
+                warc_path, record_limit, cache_dir, top_sites_set, stats
+            )
+            count += 1
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user. Saving partial results...")
 
+    # Output stats
+    with open(output, "w", encoding="utf-8") as fh:
+        json.dump(stats.to_dict(), fh, indent=2)
+
+    logger.info("Done. Stats written to %s", output)
+
+
+def _process_single_warc(
+    warc_path: str,
+    record_limit: int,
+    cache_dir: Optional[str],
+    top_sites_set: Optional[Set[str]],
+    stats: StatsCollector,
+) -> None:
+    """
+    Process a single WARC file: stream, lint records, update stats.
+    """
+    logger.info("Processing %s", warc_path)
+    try:
+        stream = get_warc_stream(warc_path, cache_dir=cache_dir)
+        record_count = 0
+        for record in iter_warc_records(stream):
+            if 0 < record_limit <= record_count:
+                break
+            record_count += 1
+            try:
+                linter = lint_record(record)
                 if not linter:
                     continue
 
@@ -113,16 +134,14 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
                         continue
 
                 stats.process_linter(linter)
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error("Error streaming %s: %s", warc_path, exc)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Error linting record in %s: %s", warc_path, exc)
+                continue
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Error streaming %s: %s", warc_path, exc)
 
-        count += 1
 
-    # Output stats
-    with open(output, "w", encoding="utf-8") as fh:
-        json.dump(stats.to_dict(), fh, indent=2)
 
-    logger.info("Done. Stats written to %s", output)
 
 
 @cli.command(name="report")
