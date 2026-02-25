@@ -20,11 +20,12 @@ VARS_TO_TRACK = {
     "BAD_DATE_SYNTAX": ["field_name"],
     "SINGLE_HEADER_REPEAT": ["field_name"],
     "CC_DUP": ["directive"],
-    "STRUCTURED_FIELD_PARSE_ERROR": ["field_name", "error"],
+    "STRUCTURED_FIELD_PARSE_ERROR": ["field_error"],
     "BAD_CC_SYNTAX": ["bad_directive"],
     "UNKNOWN_VALUE": ["field_name", "value"],
     "CROSS_ORIGIN_RESOURCE_POLICY_BAD_VALUE": ["value"],
     "BAD_SYNTAX_DETAILED": ["field_name"],
+    "CC_WRONG_MESSAGE": ["other_message"],
 }
 
 SAMPLES_TO_COLLECT = {
@@ -53,12 +54,21 @@ SAMPLES_TO_COLLECT = {
         ]
     },
     "VARY_COMPLEX": {"vary_count": ["6", "7", "8", "9", "10", "11", "12", "27"]},
+    "STRUCTURED_FIELD_PARSE_ERROR": {"field_error": ["*"]},
 }
 
 
 def get_note_value(note: Note, var_name: str) -> Optional[Any]:
     val = None
-    if hasattr(note, "vars") and var_name in note.vars:
+    if (
+        var_name == "field_error"
+        and "field_name" in note.vars
+        and "error" in note.vars
+    ):
+        # Strip context from the error message to group effectively
+        error_msg = str(note.vars["error"]).split("\n", maxsplit=1)[0]
+        val = f"{note.vars['field_name']}: {error_msg}"
+    elif hasattr(note, "vars") and var_name in note.vars:
         val = note.vars[var_name]
     elif hasattr(note, var_name):
         val = getattr(note, var_name)
@@ -127,7 +137,8 @@ def iter_collected_samples(
             val = get_note_value(note, var_name)
             if val is not None:
                 val_str = str(val)
-                if val_str.lower() in target_values:
+                # Check for wildcard or explicit match
+                if "*" in target_values or val_str.lower() in target_values:
                     sample = create_sample(note, linter, var_name, val_str)
                     if sample:
                         yield var_name, val_str, sample
