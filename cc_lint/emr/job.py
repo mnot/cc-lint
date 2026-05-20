@@ -279,6 +279,17 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             help="Filter records to the top N sites (0 disables filtering)",
         )
         self.add_passthru_arg(
+            "--sample-top-sites",
+            type=int,
+            default=10000,
+            help=(
+                "Only collect samples (URL lists) from sites within the top N "
+                "Tranco ranks (default 10000, 0 disables the sample ceiling). "
+                "Aggregate counts are not affected; this only restricts which "
+                "responses appear in the published sample lists."
+            ),
+        )
+        self.add_passthru_arg(
             "--tranco-path",
             default=None,
             help="Path to the Tranco top-sites CSV (sent to mappers via --files)",
@@ -300,10 +311,21 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             sys.stderr.write("DEBUG: mapper_init starting\n")
             self.stats = StatsCollector()
             self.top_sites: Optional[Set[str]] = None
-            if self.options.top_sites and self.options.tranco_path:
-                self.top_sites = load_top_sites(
-                    self.options.tranco_path, self.options.top_sites
-                )
+            self.sample_sites: Optional[Set[str]] = None
+            if self.options.tranco_path:
+                if self.options.top_sites:
+                    self.top_sites = load_top_sites(
+                        self.options.tranco_path, self.options.top_sites
+                    )
+                if self.options.sample_top_sites:
+                    sample_limit = self.options.sample_top_sites
+                    # The sample ceiling never exceeds the response ceiling:
+                    # sampling from sites we don't even process is meaningless.
+                    if self.options.top_sites:
+                        sample_limit = min(sample_limit, self.options.top_sites)
+                    self.sample_sites = load_top_sites(
+                        self.options.tranco_path, sample_limit
+                    )
             self.warcs_seen = 0
             init_ms = int((time.perf_counter() - init_start) * 1000)
             self.increment_counter("timing", "mapper_init_ms", init_ms)
@@ -364,6 +386,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                     result_file.name,
                     self.options.record_limit,
                     self.top_sites,
+                    self.sample_sites,
                 ),
             )
             process.start()

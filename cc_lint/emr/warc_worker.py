@@ -37,14 +37,22 @@ def process_warc_to_file(
     result_path: str,
     record_limit: int,
     top_sites: Optional[Set[str]],
+    sample_sites: Optional[Set[str]] = None,
 ) -> None:
     """Process one WAT file and write the result to ``result_path``.
+
+    ``top_sites`` gates which responses contribute to stats at all (the
+    response-set filter). ``sample_sites`` is a separate, typically smaller
+    Tranco ceiling that gates which responses contribute to the sample
+    lists -- so the published shame-list is restricted to popular sites
+    that can absorb the attention, while small-site responses still count
+    toward the aggregate metrics.
 
     Intended to run in a child process. Any exception escapes after the
     traceback is logged so the parent observes a non-zero exit code.
     """
     worker_start = time.perf_counter()
-    stats = StatsCollector()
+    stats = StatsCollector(sample_sites=sample_sites)
     s3_client: Any = create_s3_client()
     records_seen = 0
     processing_time = 0.0

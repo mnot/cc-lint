@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Iterator, Any
+from typing import Any, Dict, Iterator, Optional, Set
 from collections import Counter
 
 from httplint.note import levels, Note
@@ -149,11 +149,15 @@ def iter_collected_samples(
 
 
 class StatsCollector:
-    def __init__(self) -> None:
+    def __init__(self, sample_sites: Optional[Set[str]] = None) -> None:
         self.note_data: Dict[str, NoteDataType] = {}
         self.total_responses = 0
         self.field_counts: Counter[str] = Counter()
         self.unprocessed_counts: Counter[str] = Counter()
+        # When set, only responses whose site is in this set contribute samples
+        # (URLs in samples/var_samples). Note counts, var counts, and field
+        # histograms are unaffected. None disables the gate.
+        self.sample_sites = sample_sites
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -190,10 +194,20 @@ class StatsCollector:
                 self.note_data[note_id]["vars"][var_name][val_str] = 0
             self.note_data[note_id]["vars"][var_name][val_str] += 1
 
+    def _site_eligible_for_sample(self, site: Optional[str]) -> bool:
+        if site is None:
+            return False
+        if self.sample_sites is None:
+            return True
+        return site in self.sample_sites
+
     def _collect_samples(self, note: Note, linter: HttpResponseLinter, note_id: str) -> None:
         # Collect detailed samples, deduped by site so the cap maps to N
         # distinct sites rather than N URLs from possibly the same site.
         for var_name, val_str, sample in iter_collected_samples(note, linter):
+            sample_site = sample.get("site")
+            if not self._site_eligible_for_sample(sample_site):
+                continue
             if "var_samples" not in self.note_data[note_id]:
                 self.note_data[note_id]["var_samples"] = {}
             if var_name not in self.note_data[note_id]["var_samples"]:
@@ -203,9 +217,6 @@ class StatsCollector:
 
             current_samples = self.note_data[note_id]["var_samples"][var_name][val_str]
             if len(current_samples) >= 15:
-                continue
-            sample_site = sample.get("site")
-            if sample_site is None:
                 continue
             if sample_site not in {s.get("site") for s in current_samples}:
                 current_samples.append(sample)
@@ -217,7 +228,7 @@ class StatsCollector:
         if not sample:
             return
         sample_site = sample.get("site")
-        if sample_site is None:
+        if not self._site_eligible_for_sample(sample_site):
             return
         existing_sites = {s.get("site") for s in self.note_data[note_id]["samples"]}
         if sample_site not in existing_sites:
