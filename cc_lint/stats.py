@@ -59,7 +59,7 @@ SAMPLES_TO_COLLECT = {
 
 
 def get_note_value(note: Note, var_name: str) -> Optional[Any]:
-    val = None
+    val: Optional[Any] = None
     if (
         var_name == "field_error"
         and "field_name" in note.vars
