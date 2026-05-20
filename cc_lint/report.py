@@ -120,17 +120,15 @@ def _render_header_stats(
     total_responses: int,
     total_notes: int,
     seen_count: int,
-    possible_count: int,
 ) -> str:
-    seen_pct = (seen_count / possible_count * 100) if possible_count else 0
     return (
         '<header class="hero">'
         '<h1>Common Crawl Response Lint</h1>'
         '<dl class="stat-grid">'
         f'<div><dt>Responses analyzed</dt><dd>{_format_count(total_responses)}</dd></div>'
-        f'<div><dt>Notes generated</dt><dd>{_format_count(total_notes)}</dd></div>'
-        f'<div><dt>Note types seen</dt><dd>{seen_count} / {possible_count}'
-        f' <small>({seen_pct:.0f}%)</small></dd></div>'
+        f'<div><dt>Note occurrences</dt><dd>{_format_count(total_notes)}'
+        ' <small>across all responses</small></dd></div>'
+        f'<div><dt>Distinct note types seen</dt><dd>{_format_count(seen_count)}</dd></div>'
         "</dl>"
         "</header>"
     )
@@ -275,12 +273,17 @@ def _render_note_card(
         var_html = _render_variable_stats(note_data, field_counts)
 
     open_attr = " open" if count > 0 else ""
+    count_title = (
+        "Occurrences across responses. One response may contribute multiple "
+        "occurrences for notes that fire per header or per directive."
+    )
     return (
         f'<details class="note severity-{severity}"{open_attr}>'
         f'<summary>'
         f'<span class="badge badge-{severity}">{severity.upper()}</span>'
         f'<span class="note-id">{html.escape(note_id)}</span>'
-        f'<span class="note-count">{_format_count(count)}</span>'
+        f'<span class="note-count" title="{html.escape(count_title)}">'
+        f'{_format_count(count)}</span>'
         "</summary>"
         f'<div class="note-body">{sample_html}{var_html}</div>'
         "</details>"
@@ -586,9 +589,7 @@ def _build_html(data: Dict[str, Any]) -> str:
     )
 
     body_parts = [
-        _render_header_stats(
-            total_responses, total_notes, len(seen_note_ids), len(possible_note_ids)
-        ),
+        _render_header_stats(total_responses, total_notes, len(seen_note_ids)),
         _render_notes_section(notes, field_counts, severity_index),
         _render_field_counts_section(field_counts, total_responses),
         _render_unprocessed_section(unprocessed_counts),
