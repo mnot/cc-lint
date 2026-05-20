@@ -30,6 +30,7 @@ from cc_lint.emr.warc_worker import (
     load_warc_worker_result,
     process_warc_to_file,
 )
+from cc_lint.hll import hll_merge
 from cc_lint.stats import StatsCollector
 from cc_lint.top_sites import load_top_sites
 
@@ -116,6 +117,12 @@ def _merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         for var_name, was_trunc in source_truncated.items():
             if was_trunc:
                 merged_truncated[var_name] = True
+    src_hll = source.get("sites_hll")
+    if src_hll:
+        if "sites_hll" not in target:
+            target["sites_hll"] = list(src_hll)
+        else:
+            hll_merge(target["sites_hll"], src_hll)
 
 
 def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
@@ -176,6 +183,12 @@ def _merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     for flag in ("_truncated_field_counts", "_truncated_unprocessed_counts"):
         if source.get(flag):
             target[flag] = True
+    src_hll = source.get("sites_hll")
+    if src_hll:
+        if "sites_hll" not in target:
+            target["sites_hll"] = list(src_hll)
+        else:
+            hll_merge(target["sites_hll"], src_hll)
 
 
 def _trim_note(note: Dict[str, Any]) -> Dict[str, Any]:
@@ -475,11 +488,17 @@ class CCLintJob(MRJob):  # type: ignore[misc]
 
     def mapper_final(self) -> Generator[Tuple[str, Any], None, None]:
         stats = trim_stats_dict(self._stats_dict())
-        yield GLOBALS_KEY, {
+        globals_payload: Dict[str, Any] = {
             "total_responses": stats.get("total_responses", 0),
             "field_counts": stats.get("field_counts", {}),
             "unprocessed_counts": stats.get("unprocessed_counts", {}),
         }
+        if stats.get("sites_hll"):
+            globals_payload["sites_hll"] = stats["sites_hll"]
+        for flag in ("_truncated_field_counts", "_truncated_unprocessed_counts"):
+            if stats.get(flag):
+                globals_payload[flag] = True
+        yield GLOBALS_KEY, globals_payload
         for note_id, note in stats.get("notes", {}).items():
             yield NOTE_KEY_PREFIX + note_id, note
 

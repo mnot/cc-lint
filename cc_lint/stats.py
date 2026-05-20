@@ -1,10 +1,16 @@
-from typing import Any, Dict, Iterator, Optional, Set
+from typing import Any, Dict, Iterator, List, Optional, Set
 from collections import Counter
 
 from httplint.note import levels, Note
 from httplint import HttpResponseLinter
 from httplint.field.finder import UnknownHttpField
 
+from cc_lint.hll import (
+    HLL_P_GLOBAL,
+    HLL_P_PER_NOTE,
+    hll_add,
+    make_registers,
+)
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
 
@@ -158,27 +164,44 @@ class StatsCollector:
         # (URLs in samples/var_samples). Note counts, var counts, and field
         # histograms are unaffected. None disables the gate.
         self.sample_sites = sample_sites
+        # HyperLogLog of distinct sites that contributed any response, plus
+        # per-note HLLs for "seen on N sites" cardinality. Per-note HLLs use a
+        # smaller precision to keep shuffle bounded across many notes.
+        self.sites_hll: List[int] = make_registers(HLL_P_GLOBAL)
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
         Extracts stats from a finished linter.
         """
         self.total_responses += 1
+        site = normalize_site(getattr(linter, "base_uri", None))
+        if site:
+            hll_add(self.sites_hll, HLL_P_GLOBAL, site)
         for note in linter.notes:
             if note.level not in [levels.WARN, levels.BAD]:
                 continue
-            self._process_note(note, linter)
+            self._process_note(note, linter, site)
 
         self._process_headers(linter)
 
-    def _process_note(self, note: Note, linter: HttpResponseLinter) -> None:
-        # Using the note's class name as identifier
+    def _process_note(
+        self, note: Note, linter: HttpResponseLinter, site: Optional[str]
+    ) -> None:
         note_id = note.__class__.__name__
 
         if note_id not in self.note_data:
-            self.note_data[note_id] = {"count": 0, "samples": [], "vars": {}}
+            self.note_data[note_id] = {
+                "count": 0,
+                "samples": [],
+                "vars": {},
+                "sites_hll": make_registers(HLL_P_PER_NOTE),
+            }
 
         self.note_data[note_id]["count"] += 1
+        if site:
+            sites_hll = self.note_data[note_id].get("sites_hll")
+            if sites_hll is not None:
+                hll_add(sites_hll, HLL_P_PER_NOTE, site)
 
         self._track_vars(note, note_id)
         self._collect_samples(note, linter, note_id)
@@ -256,4 +279,5 @@ class StatsCollector:
             "notes": self.note_data,
             "field_counts": dict(self.field_counts),
             "unprocessed_counts": dict(self.unprocessed_counts),
+            "sites_hll": self.sites_hll,
         }

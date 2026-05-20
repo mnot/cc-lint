@@ -8,9 +8,11 @@ and dark themes are derived from the browser's prefers-color-scheme.
 import html
 import json
 import urllib.parse
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from httplint.note import Note, levels
+
+from cc_lint.hll import hll_estimate
 
 
 # ---- Severity classification ------------------------------------------------
@@ -120,12 +122,20 @@ def _render_header_stats(
     total_responses: int,
     total_notes: int,
     seen_count: int,
+    distinct_sites_estimate: Optional[int],
 ) -> str:
+    sites_card = ""
+    if distinct_sites_estimate is not None:
+        sites_card = (
+            f'<div><dt>Distinct sites analyzed</dt><dd>~{_format_count(distinct_sites_estimate)}'
+            ' <small>HLL estimate</small></dd></div>'
+        )
     return (
         '<header class="hero">'
         '<h1>Common Crawl Response Lint</h1>'
         '<dl class="stat-grid">'
         f'<div><dt>Responses analyzed</dt><dd>{_format_count(total_responses)}</dd></div>'
+        f'{sites_card}'
         f'<div><dt>Note occurrences</dt><dd>{_format_count(total_notes)}'
         ' <small>across all responses</small></dd></div>'
         f'<div><dt>Distinct note types seen</dt><dd>{_format_count(seen_count)}</dd></div>'
@@ -284,11 +294,22 @@ def _render_note_card(
         "Occurrences across responses. One response may contribute multiple "
         "occurrences for notes that fire per header or per directive."
     )
+    sites_pill = ""
+    sites_hll = note_data.get("sites_hll") if isinstance(note_data, dict) else None
+    if sites_hll:
+        site_est = hll_estimate(sites_hll)
+        if site_est > 0:
+            sites_pill = (
+                f'<span class="note-sites" title="HyperLogLog estimate of '
+                "distinct sites where this note fired.\">"
+                f"~{_format_count(site_est)} sites</span>"
+            )
     return (
         f'<details class="note severity-{severity}"{open_attr}>'
         f'<summary>'
         f'<span class="badge badge-{severity}">{severity.upper()}</span>'
         f'<span class="note-id">{html.escape(note_id)}</span>'
+        f'{sites_pill}'
         f'<span class="note-count" title="{html.escape(count_title)}">'
         f'{_format_count(count)}</span>'
         "</summary>"
@@ -537,6 +558,15 @@ STYLE = """
   .badge-bad { background: var(--bad-bg); color: var(--bad-fg); border-color: var(--bad-border); }
   .badge-warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-border); }
   .note-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; }
+  .note-sites {
+    background: var(--row-alt);
+    border: 1px solid var(--card-border);
+    border-radius: .25rem;
+    color: var(--muted);
+    font-size: .75em;
+    padding: .05rem .35rem;
+    font-variant-numeric: tabular-nums;
+  }
   .note-count { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
   .note-body { padding: .25rem .75rem .75rem; }
   .note-body > ul.samples { margin: 0 0 .75rem; }
@@ -617,8 +647,15 @@ def _build_html(data: Dict[str, Any]) -> str:
         possible_note_ids, seen_note_ids
     )
 
+    sites_hll = data.get("sites_hll")
+    distinct_sites_estimate = (
+        hll_estimate(sites_hll) if isinstance(sites_hll, list) and sites_hll else None
+    )
+
     body_parts = [
-        _render_header_stats(total_responses, total_notes, len(seen_note_ids)),
+        _render_header_stats(
+            total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
+        ),
         _render_notes_section(notes, field_counts, severity_index),
         _render_field_counts_section(
             field_counts, total_responses, bool(data.get("_truncated_field_counts"))

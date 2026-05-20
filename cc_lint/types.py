@@ -12,3 +12,4 @@ class NoteDataType(TypedDict):
     samples: List[SampleType]
     vars: Dict[str, Dict[str, int]]
     var_samples: NotRequired[Dict[str, Dict[str, List[SampleType]]]]
+    sites_hll: NotRequired[List[int]]

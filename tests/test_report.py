@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from typing import Any, Dict
 
+from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
 from cc_lint.report import generate_report
 
 
@@ -97,6 +98,33 @@ class TestRenderer(unittest.TestCase):
         # unprocessed, and per-note vars).
         self.assertGreaterEqual(html.count("long tail"), 3)
         self.assertIn("class=\"muted truncated\"", html)
+
+    def test_sites_hll_surfaces(self) -> None:
+        global_hll = make_registers(HLL_P_GLOBAL)
+        for i in range(50):
+            hll_add(global_hll, HLL_P_GLOBAL, f"site-{i}.example")
+        note_hll = make_registers(HLL_P_PER_NOTE)
+        for i in range(20):
+            hll_add(note_hll, HLL_P_PER_NOTE, f"site-{i}.example")
+        data = {
+            "total_responses": 100,
+            "sites_hll": global_hll,
+            "field_counts": {},
+            "unprocessed_counts": {},
+            "notes": {
+                "BAD_SYNTAX": {
+                    "count": 30,
+                    "samples": [],
+                    "vars": {},
+                    "sites_hll": note_hll,
+                }
+            },
+        }
+        html = self._render(data)
+        self.assertIn("Distinct sites analyzed", html)
+        self.assertIn("HLL estimate", html)
+        self.assertIn("note-sites", html)
+        self.assertIn("sites</span>", html)
 
     def test_url_escaping(self) -> None:
         bad = {
