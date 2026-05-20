@@ -21,6 +21,10 @@ help:
 	@echo "  make lint          Run pylint over package and tests"
 	@echo "  make stats.json    Run a local lint against paths.txt"
 	@echo "  make report.html   Render report.html from stats.json"
+	@echo "  make test-emr      Run an EMR smoke test"
+	@echo "  make emr           Run the full EMR analysis"
+	@echo "  make report RESULTS_DIR=results/...  Re-render saved EMR reports"
+	@echo "  make tranco-cache  Ensure the Tranco top-sites CSV is downloaded"
 	@echo "  make show-config   Print effective make configuration"
 	@echo "  make clean         Remove local generated scratch artifacts and venv"
 	@echo ""
@@ -82,5 +86,77 @@ typecheck: typecheck_py
 
 .PHONY: tidy
 tidy: tidy_py
+
+# --- EMR pipeline -----------------------------------------------------------
+
+MRJOB_BOOTSTRAP_ARGS = \
+	--bootstrap "$(MRJOB_BOOTSTRAP_INSTALL)" \
+	--bootstrap "aws s3 sync $(WHEEL_S3_PATH) /tmp/wheels/" \
+	--bootstrap "$(MRJOB_BOOTSTRAP_PIP_INSTALL)"
+
+MRJOB_COMMON_ARGS = \
+	-r emr \
+	$(MRJOB_BOOTSTRAP_ARGS) \
+	--files "$(TRANCO_CACHE)\#top-1m-sites.csv" \
+	--cleanup $(MRJOB_CLEANUP) \
+	--no-read-logs --no-cat-output \
+	--tranco-path top-1m-sites.csv
+
+RESULTS_DIR ?=
+
+.PHONY: tranco-cache
+tranco-cache: venv
+	$(VENV)/python -c "from cc_lint.top_sites import get_top_sites_path; get_top_sites_path('$(TRANCO_CACHE_DIR)')"
+
+.PHONY: emr
+emr: check-s3-config venv tranco-cache
+	$(VENV)/python -m cc_lint.emr.split_paths \
+		s3://commoncrawl/crawl-data/$(CRAWL_ID)/warc.paths.gz \
+		$(PATHS_PREFIX)$(FULL_RUN_NAME)/ \
+		$(MAP_TASKS)
+	$(VENV)/python -m cc_lint.emr.job -c $(MRJOB_CONFIG) \
+		$(MRJOB_COMMON_ARGS) \
+		--jobconf mapreduce.job.reduces=$(REDUCES) \
+		--top-sites $(TOP_N) \
+		--record-limit $(RECORD_LIMIT) \
+		--output-dir $(OUTPUT_DIR)$(FULL_RUN_NAME)/ \
+		$(PATHS_PREFIX)$(FULL_RUN_NAME)/
+	mkdir -p results/$(FULL_RUN_NAME)
+	aws s3 sync $(OUTPUT_DIR)$(FULL_RUN_NAME)/ results/$(FULL_RUN_NAME)/
+	$(VENV)/python -m cc_lint.emr.finalize results/$(FULL_RUN_NAME)/ results/$(FULL_RUN_NAME)/report.html
+	@echo "Report generated at results/$(FULL_RUN_NAME)/report.html"
+
+LIMIT ?= 1
+
+.PHONY: test-emr
+test-emr: check-s3-config venv tranco-cache
+	$(VENV)/python -m cc_lint.emr.split_paths \
+		tests/fixtures/warc.paths.txt \
+		$(PATHS_PREFIX)$(TEST_RUN_NAME)/ \
+		$(TEST_MAP_TASKS) \
+		$(LIMIT)
+	$(VENV)/python -m cc_lint.emr.job -c $(MRJOB_TEST_CONFIG) \
+		$(MRJOB_COMMON_ARGS) \
+		--jobconf mapreduce.job.reduces=$(TEST_REDUCES) \
+		--top-sites $(LOCAL_TOP_N) \
+		--record-limit $(RECORD_LIMIT) \
+		--limit $(LIMIT) \
+		--output-dir $(OUTPUT_DIR)$(TEST_RUN_NAME)/ \
+		$(PATHS_PREFIX)$(TEST_RUN_NAME)/
+	mkdir -p results/$(TEST_RUN_NAME)
+	aws s3 sync $(OUTPUT_DIR)$(TEST_RUN_NAME)/ results/$(TEST_RUN_NAME)/
+	$(VENV)/python -m cc_lint.emr.finalize results/$(TEST_RUN_NAME)/ results/$(TEST_RUN_NAME)/report.html
+	@echo "Report generated at results/$(TEST_RUN_NAME)/report.html"
+
+# Re-render a specific results dir: make results/test-xxx/report.html
+.PHONY: results/%/report.html
+results/%/report.html: venv
+	$(VENV)/python -m cc_lint.emr.finalize results/$*/ $@
+
+.PHONY: report
+report: venv
+	@test -n "$(RESULTS_DIR)" || (echo "Usage: make report RESULTS_DIR=results/test-YYYYMMDD-HHMMSS" && exit 1)
+	$(VENV)/python -m cc_lint.emr.finalize $(RESULTS_DIR) $(RESULTS_DIR)/report.html
+	@echo "Report generated at $(RESULTS_DIR)/report.html"
 
 include Makefile.pyproject

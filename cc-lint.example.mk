@@ -27,5 +27,5 @@ EMR_LOG_DIR ?= /tmp/cc-lint-emr-logs
 EMR_LOG_CLUSTER_ID ?=
 
 TRANCO_CACHE_DIR ?= $(HOME)/.cache/cc-lint
-TRANCO_CACHE_BASENAME ?= top-1m-sites.csv
+TRANCO_CACHE_BASENAME ?= top-1m.csv
 TRANCO_CACHE ?= $(TRANCO_CACHE_DIR)/$(TRANCO_CACHE_BASENAME)
