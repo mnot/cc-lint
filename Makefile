@@ -27,6 +27,7 @@ help:
 	@echo "  make tranco-cache  Ensure the Tranco top-sites CSV is downloaded"
 	@echo "  make wheels        Build EMR dependency wheels"
 	@echo "  make upload-wheels Build and upload EMR dependency wheels"
+	@echo "  make emr-timing EMR_LOG_CLUSTER_ID=j-...  Summarize preserved EMR timing logs"
 	@echo "  make show-config   Print effective make configuration"
 	@echo "  make clean         Remove local generated scratch artifacts and venv"
 	@echo ""
@@ -120,6 +121,11 @@ wheels:
 .PHONY: upload-wheels
 upload-wheels: check-s3-config wheels
 	aws s3 sync wheels/ $(WHEEL_S3_PATH)
+
+.PHONY: emr-timing
+emr-timing: venv
+	@test -n "$(EMR_LOG_CLUSTER_ID)" || (echo "Usage: make emr-timing EMR_LOG_CLUSTER_ID=j-..." && exit 1)
+	$(VENV)/python -m cc_lint.emr.timing --cluster-id $(EMR_LOG_CLUSTER_ID) --log-dir $(EMR_LOG_DIR)
 
 .PHONY: emr
 emr: check-s3-config venv tranco-cache
