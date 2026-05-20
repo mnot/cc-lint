@@ -20,8 +20,8 @@ TEST_REDUCES ?= 1
 
 MRJOB_CONFIG ?= mrjob.conf
 MRJOB_TEST_CONFIG ?= mrjob-test.conf
-MRJOB_BOOTSTRAP_INSTALL ?= sudo dnf install -y python3.12 python3.12-pip libxml2 libxslt zlib lz4 brotli
-MRJOB_BOOTSTRAP_PIP_INSTALL ?= sudo /usr/bin/python3.12 -m pip install --no-index --find-links=/tmp/wheels/ mrjob fastwarc httplint boto3 requests click publicsuffix2
+MRJOB_BOOTSTRAP_INSTALL ?= sudo dnf install -y python3.12 python3.12-pip zlib brotli
+MRJOB_BOOTSTRAP_PIP_INSTALL ?= sudo /usr/bin/python3.12 -m pip install --no-index --find-links=/tmp/wheels/ mrjob warcio httplint boto3 requests click python-dateutil
 MRJOB_CLEANUP ?= TMP
 EMR_LOG_DIR ?= /tmp/cc-lint-emr-logs
 EMR_LOG_CLUSTER_ID ?=

@@ -25,6 +25,8 @@ help:
 	@echo "  make emr           Run the full EMR analysis"
 	@echo "  make report RESULTS_DIR=results/...  Re-render saved EMR reports"
 	@echo "  make tranco-cache  Ensure the Tranco top-sites CSV is downloaded"
+	@echo "  make wheels        Build EMR dependency wheels"
+	@echo "  make upload-wheels Build and upload EMR dependency wheels"
 	@echo "  make show-config   Print effective make configuration"
 	@echo "  make clean         Remove local generated scratch artifacts and venv"
 	@echo ""
@@ -107,6 +109,17 @@ RESULTS_DIR ?=
 .PHONY: tranco-cache
 tranco-cache: venv
 	$(VENV)/python -c "from cc_lint.top_sites import get_top_sites_path; get_top_sites_path('$(TRANCO_CACHE_DIR)')"
+
+.PHONY: wheels
+wheels:
+	mkdir -p wheels
+	docker run --rm --platform linux/amd64 -v $(PWD)/wheels:/output amazonlinux:2023 /bin/bash -c "\
+		yum install -y gcc gcc-c++ python3.12-devel python3.12-pip zlib-devel brotli-devel && \
+		/usr/bin/python3.12 -m pip wheel --wheel-dir=/output mrjob warcio httplint boto3 requests click python-dateutil"
+
+.PHONY: upload-wheels
+upload-wheels: check-s3-config wheels
+	aws s3 sync wheels/ $(WHEEL_S3_PATH)
 
 .PHONY: emr
 emr: check-s3-config venv tranco-cache
