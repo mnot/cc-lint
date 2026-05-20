@@ -44,7 +44,7 @@ dev = [
 ]
 
 [project.urls]
-homepage = "PROJECT_URL"
+homepage = "https://github.com/mnot/cc-lint"
 
 [project.scripts]
 cc-lint = "cc_lint.cli:cli"
@@ -66,7 +66,7 @@ where = ["."]
 include-package-data = true
 
 [tool.setuptools.package-data]
-SHORTNAME = ["py.typed"]
+cc_lint = ["py.typed"]
 
 [tool.mypy]
 strict = true
