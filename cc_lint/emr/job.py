@@ -123,6 +123,32 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
 GLOBALS_KEY = "globals"
 NOTE_KEY_PREFIX = "note:"
 
+# Hadoop limits the number of distinct counter names (default 120). Bucket
+# child-process failures into a fixed cardinality set instead of emitting one
+# counter per observed exit code / signal number.
+_SIGKILL = 9
+_SIGSEGV = 11
+_SIGTERM = 15
+_SIGBUS = 10
+
+
+_SIGNAL_BUCKETS = {
+    _SIGKILL: "warc_signal_sigkill",
+    _SIGSEGV: "warc_signal_sigsegv",
+    _SIGBUS: "warc_signal_sigbus",
+    _SIGTERM: "warc_signal_sigterm",
+}
+
+
+def _failure_bucket(exit_code: Optional[int]) -> str:
+    if exit_code is None:
+        return "warc_exit_unknown"
+    if exit_code == 0:
+        return "warc_exit_zero"
+    if exit_code > 0:
+        return "warc_exit_nonzero"
+    return _SIGNAL_BUCKETS.get(-exit_code, "warc_signal_other")
+
 
 def _merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target["total_responses"] = target.get("total_responses", 0) + int(
@@ -375,16 +401,15 @@ class CCLintJob(MRJob):  # type: ignore[misc]
     ) -> None:
         exit_label = "unknown" if exit_code is None else str(exit_code)
         signal_label = ""
+        bucket = _failure_bucket(exit_code)
         if exit_code is not None and exit_code < 0:
             signal_label = f" signal={-exit_code}"
-            self.increment_counter("status", f"warc_signal_{-exit_code}", 1)
-        elif exit_code is not None:
-            self.increment_counter("status", f"warc_exit_{exit_code}", 1)
+        self.increment_counter("status", bucket, 1)
         self.increment_counter("status", "warcs_failed", 1)
         sys.stderr.write(
             "ERROR: failed WARC "
             f"{self.warcs_seen}: {raw_path} | "
-            f"exit_code={exit_label}{signal_label} "
+            f"exit_code={exit_label}{signal_label} bucket={bucket} "
             "child process did not produce results\n"
         )
         sys.stderr.flush()
