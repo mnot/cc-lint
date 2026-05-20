@@ -120,6 +120,33 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         _merge_note(target["notes"][note_id], note)
 
 
+GLOBALS_KEY = "globals"
+NOTE_KEY_PREFIX = "note:"
+
+
+def _merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    target["total_responses"] = target.get("total_responses", 0) + int(
+        source.get("total_responses", 0)
+    )
+    target.setdefault("field_counts", {})
+    _merge_counts(target["field_counts"], source.get("field_counts", {}))
+    target.setdefault("unprocessed_counts", {})
+    _merge_counts(target["unprocessed_counts"], source.get("unprocessed_counts", {}))
+
+
+def _trim_note(note: Dict[str, Any]) -> Dict[str, Any]:
+    """Trim a single per-note dict in place."""
+    wrapper = {"notes": {"_": note}}
+    trim_stats_dict(wrapper)
+    return note
+
+
+def _trim_globals(globals_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Trim a globals dict (scalars + header histograms) in place."""
+    trim_stats_dict(globals_dict)  # ignores 'notes' if absent
+    return globals_dict
+
+
 def _trim_counts(counts: Dict[str, int], top_k: int) -> Dict[str, int]:
     if len(counts) <= top_k:
         return counts
@@ -337,25 +364,42 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         sys.stderr.flush()
 
     def mapper_final(self) -> Generator[Tuple[str, Any], None, None]:
-        yield "stats", trim_stats_dict(self._stats_dict())
+        stats = trim_stats_dict(self._stats_dict())
+        yield GLOBALS_KEY, {
+            "total_responses": stats.get("total_responses", 0),
+            "field_counts": stats.get("field_counts", {}),
+            "unprocessed_counts": stats.get("unprocessed_counts", {}),
+        }
+        for note_id, note in stats.get("notes", {}).items():
+            yield NOTE_KEY_PREFIX + note_id, note
 
     def combiner(
         self, key: str, values: Generator[Any, None, None]
     ) -> Generator[Tuple[str, Any], None, None]:
-        if key == "stats":
+        if key == GLOBALS_KEY:
             merged: Dict[str, Any] = {}
             for value in values:
-                merge_stats_dict(merged, value)
-            yield key, trim_stats_dict(merged)
+                _merge_globals(merged, value)
+            yield key, _trim_globals(merged)
+        elif key.startswith(NOTE_KEY_PREFIX):
+            merged_note: Dict[str, Any] = {"count": 0, "samples": [], "vars": {}}
+            for value in values:
+                _merge_note(merged_note, value)
+            yield key, _trim_note(merged_note)
 
     def reducer(
         self, key: str, values: Generator[Any, None, None]
     ) -> Generator[Tuple[str, Any], None, None]:
-        if key == "stats":
+        if key == GLOBALS_KEY:
             merged: Dict[str, Any] = {}
             for value in values:
-                merge_stats_dict(merged, value)
-            yield "summary", trim_stats_dict(merged)
+                _merge_globals(merged, value)
+            yield GLOBALS_KEY, _trim_globals(merged)
+        elif key.startswith(NOTE_KEY_PREFIX):
+            merged_note: Dict[str, Any] = {"count": 0, "samples": [], "vars": {}}
+            for value in values:
+                _merge_note(merged_note, value)
+            yield key, _trim_note(merged_note)
 
 
 def main() -> None:

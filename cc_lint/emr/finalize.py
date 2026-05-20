@@ -1,14 +1,24 @@
 """Finalize an EMR result directory into stats.json + report.html.
 
-The reducer in cc_lint.emr.job emits exactly one ("summary", <stats
-dict>) record per reduce task using JSONProtocol, so each part-* line
-is::
+The reducer in cc_lint.emr.job emits sharded JSONProtocol records:
 
-    "summary"\\t{"total_responses": ..., "notes": {...}, ...}
+    "globals"\\t{"total_responses": ..., "field_counts": {...}, ...}
+    "note:CC_DUP"\\t{"count": ..., "samples": [...], "vars": {...}, ...}
+    "note:BAD_SYNTAX"\\t{...}
+    ...
 
-When the reduces > 1 the summary records are not yet combined, so this
-finalizer merges them before writing stats.json and rendering the
-HTML report.
+This finalizer assembles them into the unified stats.json shape that
+cc_lint.report expects:
+
+    {
+      "total_responses": ...,
+      "field_counts": {...},
+      "unprocessed_counts": {...},
+      "notes": {"CC_DUP": {...}, "BAD_SYNTAX": {...}, ...}
+    }
+
+With REDUCES > 1 the same key may appear in multiple part-* files
+(one per reducer); _merge_globals and _merge_note do the final fold.
 
 Usage:
     python -m cc_lint.emr.finalize <results-dir> <output.html>
@@ -23,11 +33,17 @@ import os
 import sys
 from typing import Any, Dict, Iterator, Tuple
 
-from cc_lint.emr.job import merge_stats_dict
+from cc_lint.emr.job import (
+    GLOBALS_KEY,
+    NOTE_KEY_PREFIX,
+    _merge_globals,
+    _merge_note,
+    trim_stats_dict,
+)
 from cc_lint.report import generate_report
 
 
-def _iter_summary_records(results_dir: str) -> Iterator[Tuple[str, Dict[str, Any]]]:
+def _iter_records(results_dir: str) -> Iterator[Tuple[str, Dict[str, Any]]]:
     for part_path in sorted(glob.glob(os.path.join(results_dir, "part-*"))):
         with open(part_path, "r", encoding="utf-8") as part_file:
             for line in part_file:
@@ -47,21 +63,34 @@ def _iter_summary_records(results_dir: str) -> Iterator[Tuple[str, Dict[str, Any
 
 
 def merge_results(results_dir: str) -> Dict[str, Any]:
-    """Merge every "summary" record under ``results_dir`` into one dict."""
-    merged: Dict[str, Any] = {}
-    seen_keys: Dict[str, int] = {}
-    for key, value in _iter_summary_records(results_dir):
-        seen_keys[key] = seen_keys.get(key, 0) + 1
-        if key != "summary":
-            print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
-            continue
-        merge_stats_dict(merged, value)
+    """Merge sharded reducer output into a single stats dict."""
+    merged: Dict[str, Any] = {"notes": {}}
+    note_counts: Dict[str, int] = {}
+    saw_globals = False
 
-    if not merged:
+    for key, value in _iter_records(results_dir):
+        if key == GLOBALS_KEY:
+            _merge_globals(merged, value)
+            saw_globals = True
+        elif key.startswith(NOTE_KEY_PREFIX):
+            note_id = key[len(NOTE_KEY_PREFIX) :]
+            note_counts[note_id] = note_counts.get(note_id, 0) + 1
+            target = merged["notes"].setdefault(
+                note_id, {"count": 0, "samples": [], "vars": {}}
+            )
+            _merge_note(target, value)
+        else:
+            print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
+
+    if not saw_globals and not merged["notes"]:
         raise SystemExit(
-            f"No 'summary' records found under {results_dir}. "
-            f"Keys seen: {sorted(seen_keys)}"
+            f"No sharded records found under {results_dir}. "
+            f"Expected 'globals' and 'note:*' keys."
         )
+
+    # Re-trim after the final union so the union-across-reducers can't sneak
+    # past the per-mapper / per-reducer caps.
+    trim_stats_dict(merged)
     return merged
 
 
