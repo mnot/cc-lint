@@ -63,9 +63,12 @@ check-s3-config:
 	@test -n "$(WHEEL_S3_PATH)" || (echo "Set WHEEL_S3_PATH in $(CONFIG) or pass CONFIG=/path/to/config.mk"; exit 1)
 	@case "$(OUTPUT_DIR) $(PATHS_PREFIX) $(WHEEL_S3_PATH)" in *YOUR-BUCKET*) echo "Replace YOUR-BUCKET in $(CONFIG) before running EMR targets"; exit 1;; esac
 
+paths.txt:
+	curl -sSf https://data.commoncrawl.org/crawl-data/$(LOCAL_CRAWL_ID)/warc.paths.gz | gunzip > $@
+
 .PHONY: stats.json
-stats.json:
-	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt --top-sites $(LOCAL_TOP_N) > $@
+stats.json: paths.txt
+	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt --top-sites $(LOCAL_TOP_N) --output $@
 
 .PHONY: report.html
 report.html:
