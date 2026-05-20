@@ -1,352 +1,544 @@
-import json
+"""Render a stats.json into a single-file HTML report.
+
+The renderer is intentionally framework-free: one inline stylesheet, plain
+HTML, no JavaScript. Collapsible sections use native ``<details>``. Light
+and dark themes are derived from the browser's prefers-color-scheme.
+"""
+
 import html
+import json
 import urllib.parse
-from typing import Dict, List, Any, Set
+from typing import Any, Dict, List, Set, Tuple
+
 from httplint.note import Note, levels
-from cc_lint.types import NoteDataType
 
 
-def _get_unprocessed_ids(unprocessed_counts: Dict[str, int]) -> List[tuple[str, int]]:
-    return sorted(
-        unprocessed_counts.items(), key=lambda item: item[1], reverse=True
-    )[:50]
+# ---- Severity classification ------------------------------------------------
 
 
-def _format_var_string(note_vars: Dict[str, Any]) -> str:
+def _all_note_subclasses(cls: Any) -> Set[Any]:
+    return set(cls.__subclasses__()).union(
+        {s for c in cls.__subclasses__() for s in _all_note_subclasses(c)}
+    )
+
+
+def _build_severity_index() -> Dict[str, str]:
+    index: Dict[str, str] = {}
+    for note_cls in _all_note_subclasses(Note):
+        # Skip classes from our own test modules that subclass Note as a shim.
+        if note_cls.__module__.startswith("tests."):
+            continue
+        level = getattr(note_cls, "level", None)
+        if level == levels.BAD:
+            index[note_cls.__name__] = "bad"
+        elif level == levels.WARN:
+            index[note_cls.__name__] = "warn"
+    return index
+
+
+def _possible_note_ids(severity_index: Dict[str, str]) -> Set[str]:
+    return set(severity_index.keys())
+
+
+# ---- HTML helpers -----------------------------------------------------------
+
+
+REDBOT_BASE = "https://redbot.org/check?uri="
+
+
+def _redbot_link(url: str) -> str:
+    return REDBOT_BASE + urllib.parse.quote(url, safe="")
+
+
+def _format_count(count: int) -> str:
+    return f"{count:,}"
+
+
+def _format_vars(note_vars: Dict[str, Any]) -> str:
     if not note_vars:
         return ""
-    items = [f"{k}={html.escape(str(v))}" for k, v in note_vars.items()]
-    return f' <span style="color: #666; font-size: 0.9em;">({", ".join(items)})</span>'
+    items = [f"{html.escape(str(k))}={html.escape(str(v))}" for k, v in note_vars.items()]
+    return f"<span class=\"vars\">{', '.join(items)}</span>"
 
 
-def _generate_unsupported_section(unprocessed_counts: Dict[str, int]) -> List[str]:
-    content: List[str] = []
-    if unprocessed_counts:
-        content.append('<div id="unprocessed">')
-        content.append("    <h2>Top 50 Unsupported Headers</h2>")
-        content.append(
-            '    <table border="1" cellpadding="5" '
-            'style="border-collapse: collapse; margin-bottom: 20px;">'
-        )
-        content.append("        <tr><th>Header Name</th><th>Count</th></tr>")
-
-        for name, count in _get_unprocessed_ids(unprocessed_counts):
-            content.append(
-                f"        <tr><td>{html.escape(name)}</td><td>{count:,}</td></tr>"
-            )
-
-        content.append("    </table>")
-        content.append("</div>")
-    return content
+def _sample_li(sample: Dict[str, Any]) -> str:
+    url = sample.get("url", "")
+    if not url:
+        return ""
+    return (
+        f'<li><a href="{html.escape(_redbot_link(url))}" target="_blank" rel="noopener">'
+        f"{html.escape(url)}</a>{_format_vars(sample.get('vars', {}))}</li>"
+    )
 
 
-def _generate_field_error_table(
-    counts: Dict[str, int], note_data: NoteDataType
-) -> List[str]:
-    """
-    Generate a hierarchical table for field_error (field -> errors).
-    """
-    content: List[str] = []
+# ---- Section renderers ------------------------------------------------------
 
-    # Parse and group the data
-    grouped: Dict[str, List[tuple[str, int]]] = {}
-    for key, count in counts.items():
-        if ": " in key:
-            field, error = key.split(": ", 1)
-        else:
-            field, error = key, ""
 
-        if field not in grouped:
-            grouped[field] = []
-        grouped[field].append((error, count))
+def _render_header_stats(
+    total_responses: int,
+    total_notes: int,
+    seen_count: int,
+    possible_count: int,
+) -> str:
+    seen_pct = (seen_count / possible_count * 100) if possible_count else 0
+    return (
+        '<header class="hero">'
+        '<h1>Common Crawl Response Lint</h1>'
+        '<dl class="stat-grid">'
+        f'<div><dt>Responses analyzed</dt><dd>{_format_count(total_responses)}</dd></div>'
+        f'<div><dt>Notes generated</dt><dd>{_format_count(total_notes)}</dd></div>'
+        f'<div><dt>Note types seen</dt><dd>{seen_count} / {possible_count}'
+        f' <small>({seen_pct:.0f}%)</small></dd></div>'
+        "</dl>"
+        "</header>"
+    )
 
-    # Sort fields by total count
+
+def _render_field_error_block(
+    counts: Dict[str, int], var_samples: Dict[str, List[Dict[str, Any]]]
+) -> str:
+    """Render the special STRUCTURED_FIELD_PARSE_ERROR.field_error grouping."""
+    grouped: Dict[str, List[Tuple[str, int]]] = {}
+    for full_key, count in counts.items():
+        field, _, error = full_key.partition(": ")
+        grouped.setdefault(field, []).append((error or full_key, count))
+
     field_totals = {f: sum(c for _, c in errs) for f, errs in grouped.items()}
     sorted_fields = sorted(field_totals.items(), key=lambda item: item[1], reverse=True)
 
-    content.append(
-        '            <table border="1" cellpadding="5" '
-        'style="border-collapse: collapse; margin-bottom: 10px; width: 100%;">'
-    )
-    content.append("                <tr><th>Field Name</th><th>Errors</th></tr>")
-
+    rows: List[str] = []
     for field, total in sorted_fields[:50]:
-        errors = grouped[field]
-        # Sort errors by count
-        errors.sort(key=lambda item: item[1], reverse=True)
-
-        # Format errors list
-        error_items = []
+        errors = sorted(grouped[field], key=lambda item: item[1], reverse=True)
+        error_items: List[str] = []
         for err, count in errors:
-            err_html = f"{html.escape(err)} ({count:,})"
-            # Add samples if available
-            # Note: samples are stored by the full key "field: error"
-            full_key = f"{field}: {err}"
-            var_samples = note_data.get("var_samples", {}).get("field_error", {})
-
+            full_key = f"{field}: {err}" if err != field else err
             samples_html = ""
-            if full_key in var_samples:
-                sample_items = []
-                for sample in var_samples[full_key]:
-                    if isinstance(sample, dict) and "url" in sample:
-                        url = sample["url"]
-                        encoded_uri = urllib.parse.quote(url)
-                        link = html.escape(f"https://redbot.org/check?uri={encoded_uri}")
-                        sample_items.append(
-                            f'<li><a href="{link}" target="_blank" '
-                            f'style="color: #888; text-decoration: none;">'
-                            f'{html.escape(url)}</a></li>'
-                        )
-                if sample_items:
-                    samples_html = (
-                        "<ul style='margin: 3px 0 3px 20px; font-size: 0.85em; "
-                        f"list-style-type: circle;'>{''.join(sample_items)}</ul>"
-                    )
-
-            error_items.append(f"<li>{err_html}{samples_html}</li>")
-
-        errors_html = f"<ul style='margin: 0; padding-left: 20px;'>{''.join(error_items)}</ul>"
-
-        content.append(
-            f"                <tr><td valign='top'><strong>{html.escape(field)}</strong><br>"
-            f"<span style='font-size: 0.8em; color: #666;'>Total: {total:,}</span></td>"
-            f"<td>{errors_html}</td></tr>"
-        )
-
-    if len(sorted_fields) > 50:
-        content.append(
-             f'                <tr><td colspan="2" style="font-style: italic;">... '
-             f'{len(sorted_fields) - 50} more fields ...</td></tr>'
-        )
-
-    content.append("            </table>")
-    return content
-
-
-def _generate_variable_stats(
-    note_data: NoteDataType, field_counts: Dict[str, int]
-) -> List[str]:
-    content: List[str] = []
-    var_stats = note_data.get("vars", {})
-    if not var_stats:
-        return content
-
-    for var_name, counts in var_stats.items():
-        content.append(f"            <h3>Variable: {html.escape(var_name)}</h3>")
-
-        if var_name == "field_error":
-            content.extend(_generate_field_error_table(counts, note_data))
-            continue
-
-        is_field_name = var_name == "field_name"
-        headers = "<tr><th>Value</th><th>Count</th>"
-        if is_field_name:
-            headers += "<th>Total Occurrences</th><th>% of Occurrences</th>"
-        headers += "</tr>"
-
-        content.append(
-            '            <table border="1" cellpadding="5" '
-            'style="border-collapse: collapse; margin-bottom: 10px;">'
-        )
-        content.append(f"                {headers}")
-
-        sorted_vals = sorted(
-            counts.items(), key=lambda item: item[1], reverse=True
-        )
-
-        for val, val_count in sorted_vals[:25]:
-            row = f"                <tr><td>{html.escape(val)}</td><td>{val_count:,}</td>"
-            if is_field_name:
-                total = field_counts.get(val.lower(), 0)
-                if total > 0:
-                    pct = (val_count / total) * 100
-                    row += f"<td>{total:,}</td><td>{pct:.2f}%</td>"
-                else:
-                    row += f"<td>{total}</td><td>-</td>"
-            row += "</tr>"
-            content.append(row)
-            content.extend(_generate_sample_rows(note_data, var_name, val, is_field_name))
-
-        if len(sorted_vals) > 25:
-            colspan = "4" if is_field_name else "2"
-            content.append(
-                f'                <tr><td colspan="{colspan}" style="font-style: italic;">... '
-                f'{len(sorted_vals) - 25} more ...</td></tr>'
+            samples = var_samples.get(full_key) or []
+            if samples:
+                items = "".join(_sample_li(s) for s in samples)
+                samples_html = f"<ul class=\"samples\">{items}</ul>"
+            error_items.append(
+                f"<li><span class=\"err\">{html.escape(err)}</span> "
+                f"<span class=\"muted\">({_format_count(count)})</span>{samples_html}</li>"
             )
-        content.append("            </table>")
-    return content
-
-
-def _generate_sample_rows(
-    note_data: NoteDataType, var_name: str, val: str, is_field_name: bool
-) -> List[str]:
-    content = []
-    var_samples = note_data.get("var_samples", {}).get(var_name, {})
-    if val in var_samples:
-        colspan = "4" if is_field_name else "2"
-        content.append("                <tr>")
-        content.append(
-            f'                    <td colspan="{colspan}" '
-            'style="padding-left: 20px; background-color: #f9f9f9;">'
+        rows.append(
+            "<tr>"
+            f"<th scope=\"row\">{html.escape(field)}"
+            f"<br><span class=\"muted\">{_format_count(total)}</span></th>"
+            f"<td><ul class=\"errors\">{''.join(error_items)}</ul></td>"
+            "</tr>"
         )
-        content.append("                        <strong>Samples:</strong>")
-        content.append('                        <ul style="margin: 5px 0;">')
-
-        for sample in var_samples[val]:
-            if isinstance(sample, dict) and "url" in sample:
-                url = sample["url"]
-                note_vars = sample.get("vars", {})
-                var_str = _format_var_string(note_vars)  # Reusing formatting logic if suitable
-                # Actually, simpler formatting for list items
-                var_items = [f"{k}={html.escape(str(v))}" for k, v in note_vars.items()]
-                var_str = (
-                    f' <span style="color: #666; font-size: 0.8em;">({", ".join(var_items)})</span>'
-                    if var_items else ""
-                )
-
-                encoded_uri = urllib.parse.quote(url)
-                link = html.escape(f"https://redbot.org/check?uri={encoded_uri}")
-                content.append(
-                    f'                            <li><a href="{link}" target="_blank">'
-                    f'{html.escape(url)}</a>{var_str}</li>'
-                )
-        content.append("                        </ul>")
-        content.append("                    </td>")
-        content.append("                </tr>")
-    return content
+    overflow = ""
+    if len(sorted_fields) > 50:
+        overflow = (
+            f"<tr><td colspan=\"2\" class=\"muted\">"
+            f"… {len(sorted_fields) - 50} more fields not shown …</td></tr>"
+        )
+    return (
+        '<table class="var-table field-error">'
+        "<thead><tr><th>Field</th><th>Errors</th></tr></thead>"
+        f"<tbody>{''.join(rows)}{overflow}</tbody>"
+        "</table>"
+    )
 
 
-def _generate_notes_section(notes: Dict[str, Any], field_counts: Dict[str, int]) -> List[str]:
-    content = ['<div id="notes">']
+def _render_var_block(
+    var_name: str,
+    counts: Dict[str, int],
+    var_samples: Dict[str, List[Dict[str, Any]]],
+    field_counts: Dict[str, int],
+) -> str:
+    is_field_name = var_name == "field_name"
+    sorted_vals = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+
+    head_cells = ["Value", "Count"]
+    if is_field_name:
+        head_cells += ["Total occurrences", "% of occurrences"]
+    header = "".join(f"<th>{c}</th>" for c in head_cells)
+
+    rows: List[str] = []
+    for val, val_count in sorted_vals[:25]:
+        cells = [html.escape(val), _format_count(val_count)]
+        if is_field_name:
+            total = field_counts.get(val.lower(), 0)
+            if total:
+                pct = val_count / total * 100
+                cells += [_format_count(total), f"{pct:.2f}%"]
+            else:
+                cells += [_format_count(total), "—"]
+        cells_html = "".join(f"<td>{c}</td>" for c in cells)
+        rows.append(f"<tr>{cells_html}</tr>")
+        samples = var_samples.get(val) or []
+        if samples:
+            colspan = len(head_cells)
+            sample_lis = "".join(_sample_li(s) for s in samples)
+            rows.append(
+                f"<tr class=\"samples-row\"><td colspan=\"{colspan}\">"
+                f"<details><summary>Samples ({len(samples)})</summary>"
+                f"<ul class=\"samples\">{sample_lis}</ul></details></td></tr>"
+            )
+
+    if len(sorted_vals) > 25:
+        rows.append(
+            f"<tr><td colspan=\"{len(head_cells)}\" class=\"muted\">"
+            f"… {len(sorted_vals) - 25} more values not shown …</td></tr>"
+        )
+
+    return (
+        f'<h4>{html.escape(var_name)}</h4>'
+        f'<table class="var-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def _render_variable_stats(note_data: Dict[str, Any], field_counts: Dict[str, int]) -> str:
+    var_stats: Dict[str, Dict[str, int]] = note_data.get("vars", {}) or {}
+    if not var_stats:
+        return ""
+    all_var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = note_data.get(
+        "var_samples", {}
+    ) or {}
+    blocks: List[str] = []
+    for var_name, counts in var_stats.items():
+        var_samples = all_var_samples.get(var_name, {})
+        if var_name == "field_error":
+            blocks.append("<h4>field_error</h4>")
+            blocks.append(_render_field_error_block(counts, var_samples))
+        else:
+            blocks.append(_render_var_block(var_name, counts, var_samples, field_counts))
+    return f'<div class="var-stats">{"".join(blocks)}</div>'
+
+
+def _render_note_card(
+    note_id: str,
+    note_data: Dict[str, Any],
+    severity: str,
+    field_counts: Dict[str, int],
+) -> str:
+    count = note_data.get("count", 0) if isinstance(note_data, dict) else int(note_data)
+    samples = note_data.get("samples", []) if isinstance(note_data, dict) else []
+
+    sample_html = ""
+    if samples:
+        sample_html = (
+            "<ul class=\"samples\">"
+            f"{''.join(_sample_li(s) for s in samples)}"
+            "</ul>"
+        )
+
+    var_html = ""
+    if isinstance(note_data, dict):
+        var_html = _render_variable_stats(note_data, field_counts)
+
+    open_attr = " open" if count > 0 else ""
+    return (
+        f'<details class="note severity-{severity}"{open_attr}>'
+        f'<summary>'
+        f'<span class="badge badge-{severity}">{severity.upper()}</span>'
+        f'<span class="note-id">{html.escape(note_id)}</span>'
+        f'<span class="note-count">{_format_count(count)}</span>'
+        "</summary>"
+        f'<div class="note-body">{sample_html}{var_html}</div>'
+        "</details>"
+    )
+
+
+def _render_notes_section(
+    notes: Dict[str, Any],
+    field_counts: Dict[str, int],
+    severity_index: Dict[str, str],
+) -> str:
     sorted_notes = sorted(
         notes.items(),
-        key=lambda item: item[1]["count"] if isinstance(item[1], dict) else item[1],
+        key=lambda item: (
+            item[1].get("count", 0) if isinstance(item[1], dict) else int(item[1])
+        ),
         reverse=True,
     )
-
-    for note_id, note_data in sorted_notes:
-        if isinstance(note_data, int):
-            count, samples = note_data, []
-            note_data = {}
-        else:
-            count = note_data.get("count", 0)
-            samples = note_data.get("samples", [])
-
-        content.append('<div class="note">')
-        content.append(f"            <h2>{html.escape(note_id)}</h2>")
-        content.append(f'            <p class="count">Count: {count:,}</p>')
-
-        if samples:
-            content.append("            <ul>")
-            for sample_entry in samples:
-                if isinstance(sample_entry, dict) and "url" in sample_entry:
-                    url = sample_entry["url"]
-                    note_vars = sample_entry.get("vars", {})
-                    var_str = _format_var_string(note_vars)
-                else:
-                    url = sample_entry
-                    var_str = ""
-
-                encoded_uri = urllib.parse.quote(url)
-                link = html.escape(f"https://redbot.org/check?uri={encoded_uri}")
-                content.append(
-                    f'                <li><a href="{link}" target="_blank">'
-                    f'{html.escape(url)}</a>{var_str}</li>'
-                )
-            content.append("            </ul>")
-
-        content.extend(_generate_variable_stats(note_data, field_counts))
-        content.append("        </div>")
-
-    content.append("</div>")
-    return content
-
-
-def _get_all_subclasses(cls: Any) -> Set[Any]:
-    return set(cls.__subclasses__()).union(
-        [s for c in cls.__subclasses__() for s in _get_all_subclasses(c)]
+    if not sorted_notes:
+        return ""
+    cards = [
+        _render_note_card(
+            note_id, data, severity_index.get(note_id, "warn"), field_counts
+        )
+        for note_id, data in sorted_notes
+    ]
+    return (
+        '<section id="notes">'
+        '<h2>Notes</h2>'
+        f'<div class="note-list">{"".join(cards)}</div>'
+        "</section>"
     )
 
 
-def _get_possible_notes() -> Set[str]:
-    all_notes = _get_all_subclasses(Note)
-    possible_notes = set()
-    for note_cls in all_notes:
-        if getattr(note_cls, "level", None) in [levels.WARN, levels.BAD]:
-            possible_notes.add(note_cls.__name__)
-
-    return possible_notes
-
-
-def _generate_missing_notes_section(missing_notes: List[str]) -> List[str]:
-    content = []
-    if missing_notes:
-        content.append('<div id="missing_notes">')
-        content.append(f"        <h2>Unseen Notes ({len(missing_notes)})</h2>")
-        content.append(
-            "        <p>The following notes were not generated by any response:</p>"
+def _render_field_counts_section(field_counts: Dict[str, int], total_responses: int) -> str:
+    if not field_counts:
+        return ""
+    top = sorted(field_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
+    rows: List[str] = []
+    for name, count in top:
+        pct = (count / total_responses * 100) if total_responses else 0
+        rows.append(
+            f"<tr><td>{html.escape(name)}</td>"
+            f"<td>{_format_count(count)}</td>"
+            f"<td>{pct:.1f}%</td></tr>"
         )
-        content.append("        <ul>")
-        for note_name in missing_notes:
-            content.append(f"            <li>{html.escape(note_name)}</li>")
-        content.append("        </ul>")
-        content.append("</div>")
-    return content
+    return (
+        '<section id="headers">'
+        '<h2>Top Response Headers</h2>'
+        '<p class="muted">Most common response header names, with the share of '
+        "responses that included at least one instance.</p>"
+        '<table class="data-table">'
+        "<thead><tr><th>Header</th><th>Count</th><th>% of responses</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
+def _render_unprocessed_section(unprocessed_counts: Dict[str, int]) -> str:
+    if not unprocessed_counts:
+        return ""
+    top = sorted(unprocessed_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
+    rows = "".join(
+        f"<tr><td>{html.escape(name)}</td><td>{_format_count(count)}</td></tr>"
+        for name, count in top
+    )
+    return (
+        '<section id="unprocessed">'
+        '<h2>Top Unsupported Headers</h2>'
+        '<p class="muted">Header names httplint did not recognise, ranked by occurrence.</p>'
+        '<table class="data-table">'
+        "<thead><tr><th>Header</th><th>Count</th></tr></thead>"
+        f"<tbody>{rows}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
+def _render_missing_section(missing_notes: List[str]) -> str:
+    if not missing_notes:
+        return ""
+    items = "".join(f"<li>{html.escape(n)}</li>" for n in missing_notes)
+    return (
+        '<section id="missing">'
+        '<details>'
+        f'<summary><h2>Unseen note types ({len(missing_notes)})</h2></summary>'
+        '<p class="muted">httplint defines these warn/bad notes; none of them '
+        "triggered on any analysed response.</p>"
+        f'<ul class="missing-list">{items}</ul>'
+        "</details>"
+        "</section>"
+    )
+
+
+# ---- CSS --------------------------------------------------------------------
+
+
+STYLE = """
+  :root {
+    --bg: #fafafa;
+    --fg: #1c1c1c;
+    --muted: #5f6168;
+    --card: #ffffff;
+    --card-border: #e7e7ea;
+    --link: #1f4ed8;
+    --warn-bg: #fff8e1;
+    --warn-fg: #8a5400;
+    --warn-border: #f0c356;
+    --bad-bg: #fdecec;
+    --bad-fg: #a31515;
+    --bad-border: #e9a0a0;
+    --row-alt: #f5f5f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --fg: #e7e8ea;
+      --muted: #9aa0a6;
+      --card: #16181d;
+      --card-border: #2a2d33;
+      --link: #8ab4ff;
+      --warn-bg: #2a2218;
+      --warn-fg: #ffcb74;
+      --warn-border: #5b4626;
+      --bad-bg: #2b1818;
+      --bad-fg: #ff9c9c;
+      --bad-border: #5a2828;
+      --row-alt: #1a1c22;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); color: var(--fg); }
+  body {
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0 auto;
+    max-width: 64rem;
+    padding: 2rem 1.25rem 4rem;
+  }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h1, h2, h3, h4 { line-height: 1.25; margin: 0 0 .5rem; }
+  h1 { font-size: 1.75rem; }
+  h2 { font-size: 1.25rem; margin-top: 2rem; border-bottom: 1px solid var(--card-border); padding-bottom: .25rem; }
+  h3 { font-size: 1rem; margin-top: 1rem; }
+  h4 { font-size: .9rem; font-weight: 600; margin-top: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .muted { color: var(--muted); font-size: .85em; }
+  .vars { color: var(--muted); font-size: .85em; margin-left: .25em; }
+
+  .hero { padding: 1rem 0 1.5rem; border-bottom: 1px solid var(--card-border); margin-bottom: 1.5rem; }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 1rem;
+    margin: 1rem 0 0;
+  }
+  .stat-grid div {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: .5rem;
+    padding: .75rem 1rem;
+  }
+  .stat-grid dt { font-size: .8em; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat-grid dd { margin: .25rem 0 0; font-size: 1.5rem; font-weight: 600; }
+  .stat-grid dd small { font-size: .65em; font-weight: 400; color: var(--muted); }
+
+  .note-list { display: flex; flex-direction: column; gap: .5rem; }
+  details.note {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-left: 4px solid var(--card-border);
+    border-radius: .375rem;
+    padding: 0;
+  }
+  details.note.severity-bad { border-left-color: var(--bad-border); }
+  details.note.severity-warn { border-left-color: var(--warn-border); }
+  details.note > summary {
+    cursor: pointer;
+    padding: .5rem .75rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    list-style: none;
+  }
+  details.note > summary::-webkit-details-marker { display: none; }
+  details.note > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+  details.note[open] > summary::before { transform: rotate(90deg); display: inline-block; }
+  .badge {
+    display: inline-block;
+    padding: .1rem .4rem;
+    border-radius: .25rem;
+    font-size: .7em;
+    font-weight: 600;
+    letter-spacing: .04em;
+    border: 1px solid;
+  }
+  .badge-bad { background: var(--bad-bg); color: var(--bad-fg); border-color: var(--bad-border); }
+  .badge-warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-border); }
+  .note-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; }
+  .note-count { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .note-body { padding: .25rem .75rem .75rem; }
+  .note-body > ul.samples { margin: 0 0 .75rem; }
+
+  ul.samples { margin: .5rem 0; padding-left: 1.25rem; }
+  ul.samples li { word-break: break-all; line-height: 1.4; }
+  ul.errors { margin: 0; padding-left: 1.25rem; }
+  ul.errors > li { margin: .25rem 0; }
+  ul.errors .err { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  table.var-table, table.data-table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: .5rem 0 1rem;
+    font-size: .9em;
+  }
+  table.var-table th, table.var-table td,
+  table.data-table th, table.data-table td {
+    text-align: left;
+    padding: .35rem .5rem;
+    border-bottom: 1px solid var(--card-border);
+    vertical-align: top;
+  }
+  table.var-table thead th, table.data-table thead th {
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-size: .75em;
+    letter-spacing: .04em;
+    border-bottom: 2px solid var(--card-border);
+  }
+  table.var-table tbody tr:nth-child(odd):not(.samples-row) { background: var(--row-alt); }
+  table.var-table .samples-row > td { background: transparent; padding-top: 0; padding-bottom: .5rem; }
+  table.var-table .samples-row details > summary { cursor: pointer; color: var(--muted); font-size: .85em; }
+
+  .missing-list { columns: 2 14rem; column-gap: 1.25rem; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .85em; }
+  .missing-list li { break-inside: avoid; }
+
+  section { margin-top: 2.5rem; }
+  section:first-of-type { margin-top: 0; }
+"""
+
+
+# ---- Top-level --------------------------------------------------------------
+
+
+def _count_total_notes(notes: Dict[str, Any]) -> int:
+    total = 0
+    for data in notes.values():
+        if isinstance(data, dict):
+            total += int(data.get("count", 0))
+        else:
+            total += int(data)
+    return total
+
+
+def _build_html(data: Dict[str, Any]) -> str:
+    severity_index = _build_severity_index()
+    possible_note_ids = _possible_note_ids(severity_index)
+
+    total_responses = int(data.get("total_responses", 0))
+    notes = data.get("notes", data.get("note_counts", {})) or {}
+    field_counts: Dict[str, int] = data.get("field_counts", {}) or {}
+    unprocessed_counts: Dict[str, int] = data.get("unprocessed_counts", {}) or {}
+
+    total_notes = _count_total_notes(notes)
+    seen_note_ids = set(notes.keys())
+    missing_notes = sorted(possible_note_ids - seen_note_ids)
+
+    body_parts = [
+        _render_header_stats(
+            total_responses, total_notes, len(seen_note_ids), len(possible_note_ids)
+        ),
+        _render_notes_section(notes, field_counts, severity_index),
+        _render_field_counts_section(field_counts, total_responses),
+        _render_unprocessed_section(unprocessed_counts),
+        _render_missing_section(missing_notes),
+    ]
+
+    return (
+        "<!doctype html>\n"
+        '<html lang="en">\n'
+        "<head>\n"
+        '  <meta charset="utf-8">\n'
+        '  <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        "  <title>CC Lint Report</title>\n"
+        f"  <style>{STYLE}</style>\n"
+        "</head>\n"
+        "<body>\n"
+        f"{''.join(body_parts)}\n"
+        "</body>\n"
+        "</html>\n"
+    )
 
 
 def generate_report(stats_file: str, output_file: str) -> None:
-    """
-    Generates an HTML report from stats.json.
-    """
+    """Render ``stats_file`` (JSON) into a single-file HTML report."""
     with open(stats_file, "r", encoding="utf-8") as file_handle:
         data = json.load(file_handle)
 
-    total_responses = data.get("total_responses", 0)
-    notes = data.get("notes", data.get("note_counts", {}))
-    field_counts = data.get("field_counts", {})
+    html_text = _build_html(data)
 
-    # Calculate total notes
-    total_notes = 0
-    for note_data in notes.values():
-        if isinstance(note_data, int):
-            total_notes += note_data
-        else:
-            total_notes += note_data.get("count", 0)
-
-    # Calculate note stats
-    possible_notes = _get_possible_notes()
-    seen_notes = set(notes.keys())
-    missing_notes = sorted(list(possible_notes - seen_notes))
-
-    html_content = [
-        "<!DOCTYPE html>",
-        '<html lang="en">',
-        "<head>",
-        '    <meta charset="UTF-8">',
-        "    <title>CC Lint Report</title>",
-        "    <style>",
-        "        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; ",
-        "               padding: 20px; }",
-        "        .note { border-bottom: 1px solid #ccc; padding: 10px 0; }",
-        "        .count { font-weight: bold; }",
-        "        h2 { margin-bottom: 5px; }",
-        "    </style>",
-        "</head>",
-        "<body>",
-        "    <h1>Common Crawl Lint Statistics</h1>",
-        f"    <p>Total Responses Analyzed: {total_responses:,}</p>",
-        f"    <p>Total Notes Generated: {total_notes:,}</p>",
-        f"    <p>Total Note Types: {len(possible_notes)}</p>",
-        f"    <p>Seen Note Types: {len(seen_notes)}</p>",
-        f"    <p>Unseen Note Types: {len(missing_notes)}</p>",
-    ]
-
-    html_content.extend(_generate_unsupported_section(data.get("unprocessed_counts", {})))
-    html_content.extend(_generate_notes_section(notes, field_counts))
-    html_content.extend(_generate_missing_notes_section(missing_notes))
-
-    html_content.append("</body>")
-    html_content.append("</html>")
-
-    with open(output_file, "w", encoding="utf-8") as file_handle:
-        file_handle.write("\n".join(html_content))
+    with open(output_file, "w", encoding="utf-8") as out_handle:
+        out_handle.write(html_text)
