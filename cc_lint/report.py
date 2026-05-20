@@ -240,9 +240,16 @@ def _render_variable_stats(note_data: Dict[str, Any], field_counts: Dict[str, in
     all_var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = note_data.get(
         "var_samples", {}
     ) or {}
+    truncated_vars = note_data.get("_truncated_vars") or {}
     blocks: List[str] = []
     for var_name, counts in var_stats.items():
         var_samples = all_var_samples.get(var_name, {})
+        if truncated_vars.get(var_name):
+            blocks.append(
+                f'<p class="muted truncated" data-var="{html.escape(var_name)}">'
+                f"<strong>{html.escape(var_name)}</strong>: long tail elided "
+                "during shuffle; only the retained head is shown.</p>"
+            )
         if var_name == "field_error":
             blocks.append("<h4>field_error</h4>")
             blocks.append(_render_field_error_block(counts, var_samples))
@@ -318,7 +325,16 @@ def _render_notes_section(
     )
 
 
-def _render_field_counts_section(field_counts: Dict[str, int], total_responses: int) -> str:
+_TRUNCATED_NOTE = (
+    '<p class="muted truncated">The long tail of rare values was elided during '
+    "shuffle to keep cluster memory bounded; counts and percentages below "
+    "describe the retained head only.</p>"
+)
+
+
+def _render_field_counts_section(
+    field_counts: Dict[str, int], total_responses: int, truncated: bool
+) -> str:
     if not field_counts:
         return ""
     top = sorted(field_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
@@ -335,6 +351,7 @@ def _render_field_counts_section(field_counts: Dict[str, int], total_responses: 
         '<h2>Top Response Headers</h2>'
         '<p class="muted">Most common response header names, with the share of '
         "responses that included at least one instance.</p>"
+        f"{_TRUNCATED_NOTE if truncated else ''}"
         '<table class="data-table">'
         "<thead><tr><th>Header</th><th>Count</th><th>% of responses</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
@@ -343,7 +360,9 @@ def _render_field_counts_section(field_counts: Dict[str, int], total_responses: 
     )
 
 
-def _render_unprocessed_section(unprocessed_counts: Dict[str, int]) -> str:
+def _render_unprocessed_section(
+    unprocessed_counts: Dict[str, int], truncated: bool
+) -> str:
     if not unprocessed_counts:
         return ""
     top = sorted(unprocessed_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
@@ -355,6 +374,7 @@ def _render_unprocessed_section(unprocessed_counts: Dict[str, int]) -> str:
         '<section id="unprocessed">'
         '<h2>Top Unsupported Headers</h2>'
         '<p class="muted">Header names httplint did not recognise, ranked by occurrence.</p>'
+        f"{_TRUNCATED_NOTE if truncated else ''}"
         '<table class="data-table">'
         "<thead><tr><th>Header</th><th>Count</th></tr></thead>"
         f"<tbody>{rows}</tbody>"
@@ -555,6 +575,15 @@ STYLE = """
   .missing-list { columns: 2 14rem; column-gap: 1.25rem; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .85em; }
   .missing-list li { break-inside: avoid; }
 
+  .truncated {
+    background: var(--warn-bg);
+    border-left: 3px solid var(--warn-border);
+    color: var(--warn-fg);
+    margin: .5rem 0;
+    padding: .35rem .6rem;
+    border-radius: 0 .25rem .25rem 0;
+  }
+
   section { margin-top: 2.5rem; }
   section:first-of-type { margin-top: 0; }
 """
@@ -591,8 +620,12 @@ def _build_html(data: Dict[str, Any]) -> str:
     body_parts = [
         _render_header_stats(total_responses, total_notes, len(seen_note_ids)),
         _render_notes_section(notes, field_counts, severity_index),
-        _render_field_counts_section(field_counts, total_responses),
-        _render_unprocessed_section(unprocessed_counts),
+        _render_field_counts_section(
+            field_counts, total_responses, bool(data.get("_truncated_field_counts"))
+        ),
+        _render_unprocessed_section(
+            unprocessed_counts, bool(data.get("_truncated_unprocessed_counts"))
+        ),
         _render_missing_section(reachable_unseen, request_only, body_only),
     ]
 

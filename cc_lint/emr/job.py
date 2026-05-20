@@ -101,6 +101,12 @@ def _merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         _merge_var_samples(
             target["var_samples"], source["var_samples"], VAR_SAMPLE_LIMIT
         )
+    source_truncated = source.get("_truncated_vars") or {}
+    if source_truncated:
+        merged_truncated = target.setdefault("_truncated_vars", {})
+        for var_name, was_trunc in source_truncated.items():
+            if was_trunc:
+                merged_truncated[var_name] = True
 
 
 def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
@@ -158,6 +164,9 @@ def _merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_counts(target["field_counts"], source.get("field_counts", {}))
     target.setdefault("unprocessed_counts", {})
     _merge_counts(target["unprocessed_counts"], source.get("unprocessed_counts", {}))
+    for flag in ("_truncated_field_counts", "_truncated_unprocessed_counts"):
+        if source.get(flag):
+            target[flag] = True
 
 
 def _trim_note(note: Dict[str, Any]) -> Dict[str, Any]:
@@ -173,11 +182,12 @@ def _trim_globals(globals_dict: Dict[str, Any]) -> Dict[str, Any]:
     return globals_dict
 
 
-def _trim_counts(counts: Dict[str, int], top_k: int) -> Dict[str, int]:
+def _trim_counts(counts: Dict[str, int], top_k: int) -> Tuple[Dict[str, int], bool]:
+    """Return (trimmed_dict, was_truncated)."""
     if len(counts) <= top_k:
-        return counts
+        return counts, False
     top_items = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
-    return dict(top_items)
+    return dict(top_items), True
 
 
 def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
@@ -188,22 +198,39 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
     convenience.
 
     Per-note vars are trimmed by occurrence count, and var_samples are pruned
-    so they only retain entries for vals that survived the vars trim. This
-    keeps the shuffle bounded and the report focused on signal, not noise.
+    so they only retain entries for vals that survived the vars trim. Where
+    trimming actually dropped entries, sets a sticky truncation flag so the
+    finalizer / report can footnote affected notes:
+
+    - stats["_truncated_field_counts"] / ["_truncated_unprocessed_counts"]
+      become True if those header histograms had to be trimmed.
+    - note["_truncated_vars"][var_name] becomes True for each var dict that
+      had to be trimmed.
+
+    Flags are sticky: once set, subsequent merges that don't trigger
+    truncation still carry the True forward via OR semantics.
     """
     if "field_counts" in stats:
-        stats["field_counts"] = _trim_counts(stats["field_counts"], TOP_K_FIELD_COUNTS)
+        stats["field_counts"], was_trunc = _trim_counts(
+            stats["field_counts"], TOP_K_FIELD_COUNTS
+        )
+        if was_trunc:
+            stats["_truncated_field_counts"] = True
     if "unprocessed_counts" in stats:
-        stats["unprocessed_counts"] = _trim_counts(
+        stats["unprocessed_counts"], was_trunc = _trim_counts(
             stats["unprocessed_counts"], TOP_K_FIELD_COUNTS
         )
+        if was_trunc:
+            stats["_truncated_unprocessed_counts"] = True
     for note in stats.get("notes", {}).values():
         var_counts = note.get("vars", {})
         retained_vals_per_var: Dict[str, set[str]] = {}
         for var_name, counts in list(var_counts.items()):
-            trimmed = _trim_counts(counts, TOP_K_VAR_VALUES)
+            trimmed, was_trunc = _trim_counts(counts, TOP_K_VAR_VALUES)
             var_counts[var_name] = trimmed
             retained_vals_per_var[var_name] = set(trimmed.keys())
+            if was_trunc:
+                note.setdefault("_truncated_vars", {})[var_name] = True
         var_samples = note.get("var_samples")
         if var_samples:
             for var_name, by_val in list(var_samples.items()):

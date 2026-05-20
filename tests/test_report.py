@@ -76,6 +76,28 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("MISSING_USER_AGENT", html)
         self.assertIn("CHARSET_MISMATCH", html)
 
+    def test_truncation_flags_show(self) -> None:
+        data = {
+            "total_responses": 10,
+            "field_counts": {"content-type": 10},
+            "unprocessed_counts": {"x-cdn-cache": 5},
+            "_truncated_field_counts": True,
+            "_truncated_unprocessed_counts": True,
+            "notes": {
+                "BAD_SYNTAX": {
+                    "count": 5,
+                    "samples": [],
+                    "vars": {"field_name": {"link": 5}},
+                    "_truncated_vars": {"field_name": True},
+                }
+            },
+        }
+        html = self._render(data)
+        # The warning appears at least once per affected section (headers,
+        # unprocessed, and per-note vars).
+        self.assertGreaterEqual(html.count("long tail"), 3)
+        self.assertIn("class=\"muted truncated\"", html)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,
