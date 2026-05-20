@@ -63,19 +63,28 @@ def _merge_nested_counts(
         _merge_counts(target[var_name], counts)
 
 
+def _sample_key(sample: Dict[str, Any]) -> str:
+    """Return the dedup key for a sample. Prefer site; fall back to URL."""
+    key = sample.get("site")
+    if key:
+        return str(key)
+    return str(sample.get("url", ""))
+
+
 def _merge_samples(
     target: List[Dict[str, Any]],
     source: List[Dict[str, Any]],
     limit: int,
 ) -> None:
-    existing_urls = {sample["url"] for sample in target}
+    existing = {_sample_key(sample) for sample in target}
     for sample in source:
-        if sample["url"] in existing_urls:
+        key = _sample_key(sample)
+        if not key or key in existing:
             continue
         if len(target) >= limit:
             return
         target.append(sample)
-        existing_urls.add(sample["url"])
+        existing.add(key)
 
 
 def _merge_var_samples(

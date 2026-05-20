@@ -5,7 +5,8 @@ from httplint.note import levels, Note
 from httplint import HttpResponseLinter
 from httplint.field.finder import UnknownHttpField
 
-from cc_lint.types import SampleType, NoteDataType
+from cc_lint.top_sites import normalize_site
+from cc_lint.types import NoteDataType, SampleType
 
 # Configuration for variable tracking
 # Map Note ID to list of variable names to track statistics for
@@ -88,6 +89,9 @@ def create_sample(
     sample_url = getattr(linter, "base_uri", None)
     if not sample_url:
         return None
+    site = normalize_site(sample_url)
+    if site is None:
+        return None
 
     note_vars = {}
     filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
@@ -116,7 +120,7 @@ def create_sample(
             if values:
                 note_vars["field_values"] = repr(values)
 
-    return {"url": sample_url, "vars": note_vars}
+    return {"url": sample_url, "vars": note_vars, "site": site}
 
 
 def iter_tracked_vars(note: Note) -> Iterator[tuple[str, str]]:
@@ -187,7 +191,8 @@ class StatsCollector:
             self.note_data[note_id]["vars"][var_name][val_str] += 1
 
     def _collect_samples(self, note: Note, linter: HttpResponseLinter, note_id: str) -> None:
-        # Collect detailed samples
+        # Collect detailed samples, deduped by site so the cap maps to N
+        # distinct sites rather than N URLs from possibly the same site.
         for var_name, val_str, sample in iter_collected_samples(note, linter):
             if "var_samples" not in self.note_data[note_id]:
                 self.note_data[note_id]["var_samples"] = {}
@@ -196,22 +201,27 @@ class StatsCollector:
             if val_str not in self.note_data[note_id]["var_samples"][var_name]:
                 self.note_data[note_id]["var_samples"][var_name][val_str] = []
 
-            # Check limit (15)
             current_samples = self.note_data[note_id]["var_samples"][var_name][val_str]
-            if len(current_samples) < 15:
-                # Check uniqueness
-                if sample["url"] not in [s["url"] for s in current_samples]:
-                    current_samples.append(sample)
+            if len(current_samples) >= 15:
+                continue
+            sample_site = sample.get("site")
+            if sample_site is None:
+                continue
+            if sample_site not in {s.get("site") for s in current_samples}:
+                current_samples.append(sample)
 
     def _collect_note_sample(self, note: Note, linter: HttpResponseLinter, note_id: str) -> None:
-        sample_url = getattr(linter, "base_uri", None)
-        if sample_url and len(self.note_data[note_id]["samples"]) < 5:
-            sample = create_sample(note, linter)
-            if sample:
-                # Check if we already have this URL. If we do, we don't add it again.
-                current_urls = [s["url"] for s in self.note_data[note_id]["samples"]]
-                if sample_url not in current_urls:
-                    self.note_data[note_id]["samples"].append(sample)
+        if len(self.note_data[note_id]["samples"]) >= 5:
+            return
+        sample = create_sample(note, linter)
+        if not sample:
+            return
+        sample_site = sample.get("site")
+        if sample_site is None:
+            return
+        existing_sites = {s.get("site") for s in self.note_data[note_id]["samples"]}
+        if sample_site not in existing_sites:
+            self.note_data[note_id]["samples"].append(sample)
 
     def _process_headers(self, linter: HttpResponseLinter) -> None:
         # Count fields

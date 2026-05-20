@@ -4,6 +4,7 @@ from typing import Dict, List, NotRequired, TypedDict
 class SampleType(TypedDict):
     url: str
     vars: Dict[str, str]
+    site: NotRequired[str]
 
 
 class NoteDataType(TypedDict):

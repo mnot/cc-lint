@@ -1,7 +1,7 @@
-import os
 import logging
+import os
 import zipfile
-from typing import Set
+from typing import Optional, Set
 from urllib.parse import urlparse
 
 import requests
@@ -62,25 +62,33 @@ def load_top_sites(path: str, limit: int) -> Set[str]:
     return sites
 
 
-def is_in_top_sites(url_or_host: str, top_sites: Set[str]) -> bool:
+def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
+    """Normalize a URL or hostname to a comparable site key.
+
+    Lowercases, strips a leading "www." label, and returns just the host
+    portion. Returns None for empty/None input or any parse failure.
+
+    The result is the same shape as entries in the Tranco list (host form),
+    so it can be compared against top-sites sets directly.
     """
-    Check if a URL's host (or the host string itself) is in the top sites list.
-    Handles 'www.' variance.
-    """
+    if not url_or_host:
+        return None
     try:
         if "://" in url_or_host:
-            parsed = urlparse(url_or_host)
-            host = parsed.hostname
+            host = urlparse(url_or_host).hostname
         else:
             host = url_or_host
-
         if not host:
-            return False
-
-        host_stripped = host.lower()
-        if host_stripped.startswith("www."):
-            host_stripped = host_stripped[4:]
-
-        return host_stripped in top_sites
+            return None
+        host = host.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return host
     except Exception:  # pylint: disable=broad-except
-        return False
+        return None
+
+
+def is_in_top_sites(url_or_host: str, top_sites: Set[str]) -> bool:
+    """Check if a URL's host (or the host string itself) is in ``top_sites``."""
+    site = normalize_site(url_or_host)
+    return site is not None and site in top_sites
