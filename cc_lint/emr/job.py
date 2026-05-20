@@ -37,6 +37,14 @@ from cc_lint.top_sites import load_top_sites
 SAMPLE_LIMIT = 5
 VAR_SAMPLE_LIMIT = 15
 
+# Long-tail caps applied before shuffle and again at reducer output. The web
+# generates extremely long-tailed value distributions for things like
+# UNKNOWN_VALUE.value and STRUCTURED_FIELD_PARSE_ERROR.field_error; keeping
+# the top entries by occurrence preserves the report signal while bounding
+# the shuffle and final report size.
+TOP_K_VAR_VALUES = 2000  # entries kept per vars[var_name] counts dict
+TOP_K_FIELD_COUNTS = 5000  # entries kept in field_counts / unprocessed_counts
+
 
 sys.stderr.write("DEBUG: Python interpreter started successfully\n")
 sys.stderr.flush()
@@ -110,6 +118,50 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
             note_id, {"count": 0, "samples": [], "vars": {}}
         )
         _merge_note(target["notes"][note_id], note)
+
+
+def _trim_counts(counts: Dict[str, int], top_k: int) -> Dict[str, int]:
+    if len(counts) <= top_k:
+        return counts
+    top_items = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:top_k]
+    return dict(top_items)
+
+
+def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """Cap long-tail dicts before emit/output.
+
+    Trims field_counts, unprocessed_counts, and every note's vars/var_samples
+    to the configured top-K. Mutates ``stats`` in place and returns it for
+    convenience.
+
+    Per-note vars are trimmed by occurrence count, and var_samples are pruned
+    so they only retain entries for vals that survived the vars trim. This
+    keeps the shuffle bounded and the report focused on signal, not noise.
+    """
+    if "field_counts" in stats:
+        stats["field_counts"] = _trim_counts(stats["field_counts"], TOP_K_FIELD_COUNTS)
+    if "unprocessed_counts" in stats:
+        stats["unprocessed_counts"] = _trim_counts(
+            stats["unprocessed_counts"], TOP_K_FIELD_COUNTS
+        )
+    for note in stats.get("notes", {}).values():
+        var_counts = note.get("vars", {})
+        retained_vals_per_var: Dict[str, set[str]] = {}
+        for var_name, counts in list(var_counts.items()):
+            trimmed = _trim_counts(counts, TOP_K_VAR_VALUES)
+            var_counts[var_name] = trimmed
+            retained_vals_per_var[var_name] = set(trimmed.keys())
+        var_samples = note.get("var_samples")
+        if var_samples:
+            for var_name, by_val in list(var_samples.items()):
+                keep = retained_vals_per_var.get(var_name, set())
+                if not keep:
+                    var_samples.pop(var_name, None)
+                    continue
+                for val_str in list(by_val.keys()):
+                    if val_str not in keep:
+                        by_val.pop(val_str, None)
+    return stats
 
 
 class CCLintJob(MRJob):  # type: ignore[misc]
@@ -285,7 +337,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         sys.stderr.flush()
 
     def mapper_final(self) -> Generator[Tuple[str, Any], None, None]:
-        yield "stats", self._stats_dict()
+        yield "stats", trim_stats_dict(self._stats_dict())
 
     def combiner(
         self, key: str, values: Generator[Any, None, None]
@@ -294,7 +346,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             merged: Dict[str, Any] = {}
             for value in values:
                 merge_stats_dict(merged, value)
-            yield key, merged
+            yield key, trim_stats_dict(merged)
 
     def reducer(
         self, key: str, values: Generator[Any, None, None]
@@ -303,7 +355,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             merged: Dict[str, Any] = {}
             for value in values:
                 merge_stats_dict(merged, value)
-            yield "summary", merged
+            yield "summary", trim_stats_dict(merged)
 
 
 def main() -> None:
