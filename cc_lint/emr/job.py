@@ -112,7 +112,7 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         _merge_note(target["notes"][note_id], note)
 
 
-class CCLintJob(MRJob):
+class CCLintJob(MRJob):  # type: ignore[misc]
 
     OUTPUT_PROTOCOL = JSONProtocol
     INTERNAL_PROTOCOL = JSONProtocol
