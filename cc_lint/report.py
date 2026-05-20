@@ -40,6 +40,48 @@ def _possible_note_ids(severity_index: Dict[str, str]) -> Set[str]:
     return set(severity_index.keys())
 
 
+# Notes whose firing paths in httplint are only reached when linting a request
+# (cc-lint feeds an HttpResponseLinter from WAT response metadata, so these
+# can never fire on our pipeline).
+REQUEST_ONLY_NOTES: Set[str] = {
+    "MISSING_USER_AGENT",
+    "REQUEST_CONTENT_NOT_DEFINED",
+    "URI_BAD_SYNTAX",
+    "URI_TOO_LONG",
+    "RESPONSE_HDR_IN_REQUEST",
+    "CORS_PREFLIGHT_REQUEST",
+    "CORS_PREFLIGHT_REQ_METHOD_WRONG",
+    "CORS_PREFLIGHT_REQ_NO_ORIGIN",
+    "CORS_PREFLIGHT_REQ_NO_METHOD",
+}
+
+# Notes that only fire when the response body is fed to the linter. cc-lint's
+# WAT pipeline reads headers only; the body-derived findings below cannot fire
+# until/unless we add a full-WARC mode. Listed explicitly so they don't bloat
+# the Unseen list.
+BODY_ONLY_NOTES: Set[str] = {
+    "CHARSET_MISMATCH",
+    "CHARSET_IMPLICIT_MISMATCH",
+    "CHARSET_UNDECODABLE",
+    "BAD_GZIP",
+    "BAD_BROTLI",
+    "BAD_ZLIB",
+    "DECOMPRESSION_LIMIT",
+    "CL_INCORRECT",
+}
+
+
+def _classify_unseen(
+    possible_ids: Set[str], seen_ids: Set[str]
+) -> Tuple[List[str], List[str], List[str]]:
+    """Split unseen note ids into reachable / request-only / body-only buckets."""
+    unseen = possible_ids - seen_ids
+    request_only = sorted(unseen & REQUEST_ONLY_NOTES)
+    body_only = sorted(unseen & BODY_ONLY_NOTES)
+    reachable_unseen = sorted(unseen - REQUEST_ONLY_NOTES - BODY_ONLY_NOTES)
+    return reachable_unseen, request_only, body_only
+
+
 # ---- HTML helpers -----------------------------------------------------------
 
 
@@ -318,18 +360,52 @@ def _render_unprocessed_section(unprocessed_counts: Dict[str, int]) -> str:
     )
 
 
-def _render_missing_section(missing_notes: List[str]) -> str:
-    if not missing_notes:
+def _render_unseen_subblock(title: str, body: str, notes: List[str]) -> str:
+    if not notes:
         return ""
-    items = "".join(f"<li>{html.escape(n)}</li>" for n in missing_notes)
+    items = "".join(f"<li>{html.escape(n)}</li>" for n in notes)
     return (
-        '<section id="missing">'
         '<details>'
-        f'<summary><h2>Unseen note types ({len(missing_notes)})</h2></summary>'
-        '<p class="muted">httplint defines these warn/bad notes; none of them '
-        "triggered on any analysed response.</p>"
+        f'<summary><h3>{html.escape(title)} ({len(notes)})</h3></summary>'
+        f'<p class="muted">{body}</p>'
         f'<ul class="missing-list">{items}</ul>'
         "</details>"
+    )
+
+
+def _render_missing_section(
+    reachable_unseen: List[str],
+    request_only: List[str],
+    body_only: List[str],
+) -> str:
+    if not (reachable_unseen or request_only or body_only):
+        return ""
+    blocks = [
+        _render_unseen_subblock(
+            "Reachable but not triggered",
+            "httplint defines these warn/bad notes and cc-lint's response-header "
+            "pipeline can reach them; none of them fired on any analysed response.",
+            reachable_unseen,
+        ),
+        _render_unseen_subblock(
+            "Body-only (not reachable in WAT mode)",
+            "These notes only fire when the response body is fed to httplint. "
+            "cc-lint reads WAT metadata records (response headers only), so they "
+            "are unreachable without a future full-WARC mode.",
+            body_only,
+        ),
+        _render_unseen_subblock(
+            "Request-only (not reachable for response linting)",
+            "These notes only fire from httplint's request-side code paths. "
+            "cc-lint runs HttpResponseLinter against WAT response metadata, so "
+            "they cannot fire on this pipeline.",
+            request_only,
+        ),
+    ]
+    return (
+        '<section id="missing">'
+        '<h2>Unseen note types</h2>'
+        f'{"".join(blocks)}'
         "</section>"
     )
 
@@ -505,7 +581,9 @@ def _build_html(data: Dict[str, Any]) -> str:
 
     total_notes = _count_total_notes(notes)
     seen_note_ids = set(notes.keys())
-    missing_notes = sorted(possible_note_ids - seen_note_ids)
+    reachable_unseen, request_only, body_only = _classify_unseen(
+        possible_note_ids, seen_note_ids
+    )
 
     body_parts = [
         _render_header_stats(
@@ -514,7 +592,7 @@ def _build_html(data: Dict[str, Any]) -> str:
         _render_notes_section(notes, field_counts, severity_index),
         _render_field_counts_section(field_counts, total_responses),
         _render_unprocessed_section(unprocessed_counts),
-        _render_missing_section(missing_notes),
+        _render_missing_section(reachable_unseen, request_only, body_only),
     ]
 
     return (

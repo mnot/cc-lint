@@ -64,6 +64,18 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("<!doctype html>", html)
         self.assertIn("Responses analyzed", html)
 
+    def test_unseen_notes_bucketed(self) -> None:
+        html = self._render(SAMPLE_STATS)
+        # The three subgroup headings should be present (each one is a
+        # subsection of the Unseen Notes section).
+        self.assertIn("Reachable but not triggered", html)
+        self.assertIn("Body-only", html)
+        self.assertIn("Request-only", html)
+        # Specific request-only and body-only notes should not appear in the
+        # reachable bucket -- they should be classified into their own buckets.
+        self.assertIn("MISSING_USER_AGENT", html)
+        self.assertIn("CHARSET_MISMATCH", html)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,
