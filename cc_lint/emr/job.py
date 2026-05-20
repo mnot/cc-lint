@@ -221,6 +221,15 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             default=None,
             help="Path to the Tranco top-sites CSV (sent to mappers via --files)",
         )
+        self.add_passthru_arg(
+            "--warc-timeout",
+            type=int,
+            default=900,
+            help=(
+                "Wall-clock seconds per WARC before the child worker is "
+                "terminated and the WARC is skipped (default 900 = 15 min)"
+            ),
+        )
 
     def mapper_init(self) -> None:
         init_start = time.perf_counter()
@@ -296,17 +305,34 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                 ),
             )
             process.start()
+            deadline = time.monotonic() + self.options.warc_timeout
             while process.is_alive():
                 process.join(timeout=30)
-                if process.is_alive():
-                    self.set_status(
-                        f"Downloading WARC {self.warcs_seen}: {raw_path}"
-                    )
+                if not process.is_alive():
+                    break
+                if time.monotonic() >= deadline:
                     sys.stderr.write(
-                        f"INFO: still downloading WARC {self.warcs_seen}: "
-                        f"{raw_path}\n"
+                        "ERROR: timeout WARC "
+                        f"{self.warcs_seen}: {raw_path} after "
+                        f"{self.options.warc_timeout}s; terminating child\n"
                     )
                     sys.stderr.flush()
+                    process.terminate()
+                    process.join(timeout=10)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(timeout=5)
+                    self.increment_counter("status", "warcs_failed", 1)
+                    self.increment_counter("status", "warc_timed_out", 1)
+                    return None
+                self.set_status(
+                    f"Downloading WARC {self.warcs_seen}: {raw_path}"
+                )
+                sys.stderr.write(
+                    f"INFO: still downloading WARC {self.warcs_seen}: "
+                    f"{raw_path}\n"
+                )
+                sys.stderr.flush()
 
             if process.exitcode != 0:
                 self._record_warc_failure(raw_path, process.exitcode)
