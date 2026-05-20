@@ -13,6 +13,7 @@ __pycache__
 /warc
 /paths.txt
 /report.html
+/report.md
 /stats.json
 /cc-lint.mk
 /results

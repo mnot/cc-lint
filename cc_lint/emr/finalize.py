@@ -1,4 +1,4 @@
-"""Finalize an EMR result directory into stats.json + report.html.
+"""Finalize an EMR result directory into the rendered report.
 
 The reducer in cc_lint.emr.job emits sharded JSONProtocol records:
 
@@ -7,7 +7,7 @@ The reducer in cc_lint.emr.job emits sharded JSONProtocol records:
     "note:BAD_SYNTAX"\\t{...}
     ...
 
-This finalizer assembles them into the unified stats.json shape that
+This finalizer assembles them into the unified stats dict shape that
 cc_lint.report expects:
 
     {
@@ -23,7 +23,10 @@ With REDUCES > 1 the same key may appear in multiple part-* files
 Usage:
     python -m cc_lint.emr.finalize <results-dir> <output.html>
 
-stats.json is written alongside the HTML report.
+HTML is written to ``<output.html>`` and a Markdown sibling is written to
+``<output>.md`` (cc_lint.report.default_markdown_path). The merged stats
+dict is no longer persisted to disk by default; pass --stats-json PATH
+to dump it for debugging.
 """
 
 import argparse
@@ -41,7 +44,7 @@ from cc_lint.emr.job import (
     _merge_note,
     trim_stats_dict,
 )
-from cc_lint.report import generate_report
+from cc_lint.report import default_markdown_path, render_report
 
 
 def _iter_records(results_dir: str) -> Iterator[Tuple[str, Dict[str, Any]]]:
@@ -100,7 +103,7 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Merge EMR part-* outputs and render the HTML report."
+        description="Merge EMR part-* outputs and render the HTML + Markdown report."
     )
     parser.add_argument(
         "results_dir",
@@ -113,19 +116,24 @@ def main() -> None:
     parser.add_argument(
         "--stats-json",
         default=None,
-        help="Path to write the merged stats.json (defaults to <results-dir>/stats.json)",
+        help=(
+            "Optional path to also dump the merged stats dict as JSON for "
+            "debugging. Not written by default."
+        ),
     )
     args = parser.parse_args()
 
     stats = merge_results(args.results_dir)
 
-    stats_path = args.stats_json or os.path.join(args.results_dir, "stats.json")
-    with open(stats_path, "w", encoding="utf-8") as stats_file:
-        json.dump(stats, stats_file, indent=2)
-    print(f"Wrote merged stats to {stats_path}")
+    render_report(stats, args.output_html)
+    md_path = default_markdown_path(args.output_html)
+    print(f"Wrote HTML report to {args.output_html}")
+    print(f"Wrote Markdown report to {md_path}")
 
-    generate_report(stats_path, args.output_html)
-    print(f"Wrote report to {args.output_html}")
+    if args.stats_json:
+        with open(args.stats_json, "w", encoding="utf-8") as stats_file:
+            json.dump(stats, stats_file, indent=2)
+        print(f"Wrote merged stats to {args.stats_json}")
 
 
 if __name__ == "__main__":

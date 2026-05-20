@@ -20,7 +20,7 @@ help:
 	@echo "  make typecheck     Run mypy over package and tests"
 	@echo "  make lint          Run pylint over package and tests"
 	@echo "  make stats.json    Run a local lint against paths.txt"
-	@echo "  make report.html   Render report.html from stats.json"
+	@echo "  make report.html   Render report.html + report.md from stats.json"
 	@echo "  make test-emr      Run an EMR smoke test"
 	@echo "  make emr           Run the full EMR analysis"
 	@echo "  make report RESULTS_DIR=results/...  Re-render saved EMR reports"

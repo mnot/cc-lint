@@ -1,9 +1,17 @@
-"""Top-level orchestration for the cc-lint HTML report."""
+"""Top-level orchestration for the cc-lint reports.
+
+Two callers feed this module: the CLI passes a stats.json file path; the
+EMR finalizer passes the in-memory dict it just merged from part-* shards.
+Both paths produce HTML at the configured output path plus a Markdown
+sibling at the same path with the extension swapped to ``.md``.
+"""
 
 import json
-from typing import Any, Dict
+import os
+from typing import Any, Dict, Optional
 
 from cc_lint.hll import hll_estimate
+from cc_lint.report.markdown import render_markdown
 from cc_lint.report.sections import (
     count_total_notes,
     render_field_counts_section,
@@ -74,12 +82,44 @@ def _build_html(data: Dict[str, Any]) -> str:
     )
 
 
+def default_markdown_path(html_path: str) -> str:
+    """Derive the sibling Markdown path next to ``html_path``.
+
+    ``report.html`` -> ``report.md``; if ``html_path`` has no extension
+    we append ``.md`` rather than overwriting the original filename.
+    """
+    root, ext = os.path.splitext(html_path)
+    if not ext:
+        return html_path + ".md"
+    return root + ".md"
+
+
+def render_report(
+    data: Dict[str, Any],
+    html_path: str,
+    markdown_path: Optional[str] = None,
+) -> None:
+    """Render an in-memory stats dict to HTML + Markdown.
+
+    HTML is written to ``html_path``; Markdown is written to
+    ``markdown_path`` (defaulting to ``default_markdown_path(html_path)``).
+    """
+    html_text = _build_html(data)
+    md_text = render_markdown(data)
+    with open(html_path, "w", encoding="utf-8") as out_handle:
+        out_handle.write(html_text)
+    md_path = markdown_path or default_markdown_path(html_path)
+    with open(md_path, "w", encoding="utf-8") as out_handle:
+        out_handle.write(md_text)
+
+
 def generate_report(stats_file: str, output_file: str) -> None:
-    """Render ``stats_file`` (JSON) into a single-file HTML report."""
+    """Render ``stats_file`` (JSON) into HTML + Markdown reports.
+
+    Kept as a thin file-loading wrapper around :func:`render_report` so
+    the CLI's ``cc-lint report --input stats.json --output report.html``
+    path keeps working.
+    """
     with open(stats_file, "r", encoding="utf-8") as file_handle:
         data = json.load(file_handle)
-
-    html_text = _build_html(data)
-
-    with open(output_file, "w", encoding="utf-8") as out_handle:
-        out_handle.write(html_text)
+    render_report(data, output_file)

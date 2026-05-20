@@ -1,9 +1,12 @@
-"""HTML report renderer for cc-lint stats.json output.
+"""HTML + Markdown report renderer for cc-lint stats.
 
-This subpackage replaces the single-file cc_lint/report.py. The public
-surface is unchanged: import ``generate_report`` from ``cc_lint.report``.
+Each call writes both an HTML report and a Markdown sibling alongside it.
+Two entry points:
+
+- :func:`generate_report`: file-based; reads stats from a JSON path.
+- :func:`render_report`: takes the stats dict in memory.
 """
 
-from cc_lint.report.render import generate_report
+from cc_lint.report.render import default_markdown_path, generate_report, render_report
 
-__all__ = ["generate_report"]
+__all__ = ["default_markdown_path", "generate_report", "render_report"]

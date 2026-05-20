@@ -2,6 +2,8 @@
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from typing import Any, List, Tuple
@@ -93,6 +95,85 @@ class TestMergeResults(unittest.TestCase):
                 )
             merged = merge_results(results)
             self.assertEqual(merged["total_responses"], 1)
+
+
+class TestFinalizeCli(unittest.TestCase):
+    def test_writes_html_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as results:
+            _write_part(
+                os.path.join(results, "part-00000"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 3,
+                            "field_counts": {"content-type": 3},
+                            "unprocessed_counts": {},
+                        },
+                    ),
+                    (
+                        "note:BAD_SYNTAX",
+                        {"count": 1, "samples": [], "vars": {}},
+                    ),
+                ],
+            )
+            html_path = os.path.join(results, "report.html")
+            md_path = os.path.join(results, "report.md")
+            stats_json_path = os.path.join(results, "stats.json")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "cc_lint.emr.finalize",
+                    results,
+                    html_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(os.path.exists(html_path))
+            self.assertTrue(os.path.exists(md_path))
+            # stats.json should NOT be persisted unless requested.
+            self.assertFalse(os.path.exists(stats_json_path))
+
+    def test_stats_json_flag_writes_dump(self) -> None:
+        with tempfile.TemporaryDirectory() as results:
+            _write_part(
+                os.path.join(results, "part-00000"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 1,
+                            "field_counts": {},
+                            "unprocessed_counts": {},
+                        },
+                    ),
+                ],
+            )
+            html_path = os.path.join(results, "report.html")
+            dump_path = os.path.join(results, "debug.json")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "cc_lint.emr.finalize",
+                    results,
+                    html_path,
+                    "--stats-json",
+                    dump_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(os.path.exists(dump_path))
+            with open(dump_path, "r", encoding="utf-8") as dump_file:
+                data = json.load(dump_file)
+            self.assertEqual(data["total_responses"], 1)
 
 
 if __name__ == "__main__":

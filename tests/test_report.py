@@ -49,6 +49,20 @@ class TestRenderer(unittest.TestCase):
             with open(html_path, "r", encoding="utf-8") as html_file:
                 return html_file.read()
 
+    def _render_both(self, data: Dict[str, Any]) -> tuple[str, str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            stats_path = os.path.join(tmp, "stats.json")
+            html_path = os.path.join(tmp, "report.html")
+            md_path = os.path.join(tmp, "report.md")
+            with open(stats_path, "w", encoding="utf-8") as stats_file:
+                json.dump(data, stats_file)
+            generate_report(stats_path, html_path)
+            with open(html_path, "r", encoding="utf-8") as html_file:
+                html_text = html_file.read()
+            with open(md_path, "r", encoding="utf-8") as md_file:
+                md_text = md_file.read()
+            return html_text, md_text
+
     def test_renders_with_full_data(self) -> None:
         html = self._render(SAMPLE_STATS)
         self.assertIn("<!doctype html>", html)
@@ -150,6 +164,38 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("v0.0.1", html)
         self.assertIn("2026-05-21T12:34:56Z", html)
         self.assertIn("Percentages describe this Common Crawl result set", html)
+
+    def test_markdown_sibling_written(self) -> None:
+        html, md = self._render_both(SAMPLE_STATS)
+        self.assertIn("<!doctype html>", html)
+        # Markdown should contain the report heading, a severity tag for each
+        # note, and the same note ids as the HTML.
+        self.assertIn("# Common Crawl Response Lint", md)
+        self.assertIn("`WARN`", md)  # both BAD_SYNTAX and CC_DUP are WARN
+        self.assertIn("BAD_SYNTAX", md)
+        self.assertIn("CC_DUP", md)
+        self.assertIn("Top Response Headers", md)
+        # Tables should have separator rows.
+        self.assertIn("| --- |", md)
+
+    def test_markdown_run_context_block(self) -> None:
+        data = dict(SAMPLE_STATS)
+        data["run_context"] = {
+            "crawl_id": "CC-MAIN-2026-12",
+            "top_sites": 50000,
+            "sample_top_sites": 10000,
+            "record_limit": 0,
+            "warc_limit": 0,
+            "warc_timeout_s": 900,
+            "cc_lint_version": "0.0.1",
+        }
+        data["finalized_at"] = "2026-05-21T12:34:56Z"
+        _, md = self._render_both(data)
+        self.assertIn("**Crawl:** CC-MAIN-2026-12", md)
+        self.assertIn("**cc-lint:** v0.0.1", md)
+        self.assertIn("Tranco top 50,000", md)
+        self.assertIn("Tranco top 10,000", md)
+        self.assertIn("2026-05-21T12:34:56Z", md)
 
     def test_url_escaping(self) -> None:
         bad = {
