@@ -18,7 +18,7 @@ cc_lint.report expects:
     }
 
 With REDUCES > 1 the same key may appear in multiple part-* files
-(one per reducer); _merge_globals and _merge_note do the final fold.
+(one per reducer); merge_globals and merge_note do the final fold.
 
 Usage:
     python -m cc_lint.emr.finalize <results-dir> <output.html>
@@ -40,8 +40,8 @@ from typing import Any, Dict, Iterator, Tuple
 from cc_lint.emr.job import (
     GLOBALS_KEY,
     NOTE_KEY_PREFIX,
-    _merge_globals,
-    _merge_note,
+    merge_globals,
+    merge_note,
     trim_stats_dict,
 )
 from cc_lint.report import default_markdown_path, render_report
@@ -74,7 +74,7 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
 
     for key, value in _iter_records(results_dir):
         if key == GLOBALS_KEY:
-            _merge_globals(merged, value)
+            merge_globals(merged, value)
             saw_globals = True
         elif key.startswith(NOTE_KEY_PREFIX):
             note_id = key[len(NOTE_KEY_PREFIX) :]
@@ -82,7 +82,7 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
             target = merged["notes"].setdefault(
                 note_id, {"count": 0, "samples": [], "vars": {}}
             )
-            _merge_note(target, value)
+            merge_note(target, value)
         else:
             print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
 

@@ -78,7 +78,7 @@ def _merge_nested_counts(
         _merge_counts(target[var_name], counts)
 
 
-def _sample_key(sample: Dict[str, Any]) -> str:
+def sample_key(sample: Dict[str, Any]) -> str:
     """Return the dedup key for a sample. Prefer site; fall back to URL."""
     key = sample.get("site")
     if key:
@@ -91,9 +91,9 @@ def _merge_samples(
     source: List[Dict[str, Any]],
     limit: int,
 ) -> None:
-    existing = {_sample_key(sample) for sample in target}
+    existing = {sample_key(sample) for sample in target}
     for sample in source:
-        key = _sample_key(sample)
+        key = sample_key(sample)
         if not key or key in existing:
             continue
         if len(target) >= limit:
@@ -114,7 +114,7 @@ def _merge_var_samples(
             _merge_samples(target[var_name][val_str], samples, limit)
 
 
-def _merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+def merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target["count"] = target.get("count", 0) + int(source.get("count", 0))
     target.setdefault("samples", [])
     _merge_samples(target["samples"], source.get("samples", []), SAMPLE_LIMIT)
@@ -125,9 +125,9 @@ def _merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         _merge_var_samples(
             target["var_samples"], source["var_samples"], VAR_SAMPLE_LIMIT
         )
-    source_truncated = source.get("_truncated_vars") or {}
+    source_truncated = source.get("truncated_vars") or {}
     if source_truncated:
-        merged_truncated = target.setdefault("_truncated_vars", {})
+        merged_truncated = target.setdefault("truncated_vars", {})
         for var_name, was_trunc in source_truncated.items():
             if was_trunc:
                 merged_truncated[var_name] = True
@@ -153,7 +153,7 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         target["notes"].setdefault(
             note_id, {"count": 0, "samples": [], "vars": {}}
         )
-        _merge_note(target["notes"][note_id], note)
+        merge_note(target["notes"][note_id], note)
 
 
 GLOBALS_KEY = "globals"
@@ -186,7 +186,7 @@ def _failure_bucket(exit_code: Optional[int]) -> str:
     return _SIGNAL_BUCKETS.get(-exit_code, "warc_signal_other")
 
 
-def _merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target["total_responses"] = target.get("total_responses", 0) + int(
         source.get("total_responses", 0)
     )
@@ -194,7 +194,7 @@ def _merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_counts(target["field_counts"], source.get("field_counts", {}))
     target.setdefault("unprocessed_counts", {})
     _merge_counts(target["unprocessed_counts"], source.get("unprocessed_counts", {}))
-    for flag in ("_truncated_field_counts", "_truncated_unprocessed_counts"):
+    for flag in ("truncated_field_counts", "truncated_unprocessed_counts"):
         if source.get(flag):
             target[flag] = True
     src_hll = source.get("sites_hll")
@@ -242,9 +242,9 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
     trimming actually dropped entries, sets a sticky truncation flag so the
     finalizer / report can footnote affected notes:
 
-    - stats["_truncated_field_counts"] / ["_truncated_unprocessed_counts"]
+    - stats["truncated_field_counts"] / ["truncated_unprocessed_counts"]
       become True if those header histograms had to be trimmed.
-    - note["_truncated_vars"][var_name] becomes True for each var dict that
+    - note["truncated_vars"][var_name] becomes True for each var dict that
       had to be trimmed.
 
     Flags are sticky: once set, subsequent merges that don't trigger
@@ -255,13 +255,13 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
             stats["field_counts"], TOP_K_FIELD_COUNTS
         )
         if was_trunc:
-            stats["_truncated_field_counts"] = True
+            stats["truncated_field_counts"] = True
     if "unprocessed_counts" in stats:
         stats["unprocessed_counts"], was_trunc = _trim_counts(
             stats["unprocessed_counts"], TOP_K_FIELD_COUNTS
         )
         if was_trunc:
-            stats["_truncated_unprocessed_counts"] = True
+            stats["truncated_unprocessed_counts"] = True
     for note in stats.get("notes", {}).values():
         var_counts = note.get("vars", {})
         retained_vals_per_var: Dict[str, set[str]] = {}
@@ -270,7 +270,7 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
             var_counts[var_name] = trimmed
             retained_vals_per_var[var_name] = set(trimmed.keys())
             if was_trunc:
-                note.setdefault("_truncated_vars", {})[var_name] = True
+                note.setdefault("truncated_vars", {})[var_name] = True
         var_samples = note.get("var_samples")
         if var_samples:
             for var_name, by_val in list(var_samples.items()):
@@ -520,7 +520,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         }
         if stats.get("sites_hll"):
             globals_payload["sites_hll"] = stats["sites_hll"]
-        for flag in ("_truncated_field_counts", "_truncated_unprocessed_counts"):
+        for flag in ("truncated_field_counts", "truncated_unprocessed_counts"):
             if stats.get(flag):
                 globals_payload[flag] = True
         yield GLOBALS_KEY, globals_payload
@@ -537,12 +537,12 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         if key == GLOBALS_KEY:
             merged: Dict[str, Any] = {}
             for value in values:
-                _merge_globals(merged, value)
+                merge_globals(merged, value)
             yield GLOBALS_KEY, _trim_globals(merged)
         elif key.startswith(NOTE_KEY_PREFIX):
             merged_note: Dict[str, Any] = {"count": 0, "samples": [], "vars": {}}
             for value in values:
-                _merge_note(merged_note, value)
+                merge_note(merged_note, value)
             yield key, _trim_note(merged_note)
 
 

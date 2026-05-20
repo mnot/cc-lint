@@ -138,7 +138,7 @@ class TestFinalizeCli(unittest.TestCase):
             # stats.json should NOT be persisted unless requested.
             self.assertFalse(os.path.exists(stats_json_path))
 
-    def test_stats_json_flag_writes_dump(self) -> None:
+    def test_stats_json_writes_dump(self) -> None:
         with tempfile.TemporaryDirectory() as results:
             _write_part(
                 os.path.join(results, "part-00000"),

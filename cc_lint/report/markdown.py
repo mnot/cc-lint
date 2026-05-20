@@ -150,7 +150,7 @@ def _render_note_block(
             lines.append(f"- {url}")
         lines.append("")
 
-    truncated_vars = note_data.get("_truncated_vars") or {}
+    truncated_vars = note_data.get("truncated_vars") or {}
     var_stats = note_data.get("vars") or {}
     for var_name, counts in var_stats.items():
         if not counts:
@@ -293,12 +293,12 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(_render_notes_section(notes, field_counts, severity_index))
     lines.extend(
         _render_field_counts(
-            field_counts, total_responses, bool(data.get("_truncated_field_counts"))
+            field_counts, total_responses, bool(data.get("truncated_field_counts"))
         )
     )
     lines.extend(
         _render_unprocessed(
-            unprocessed_counts, bool(data.get("_truncated_unprocessed_counts"))
+            unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         )
     )
     lines.extend(_render_unseen(reachable_unseen, request_only, body_only))

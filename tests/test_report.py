@@ -96,14 +96,14 @@ class TestRenderer(unittest.TestCase):
             "total_responses": 10,
             "field_counts": {"content-type": 10},
             "unprocessed_counts": {"x-cdn-cache": 5},
-            "_truncated_field_counts": True,
-            "_truncated_unprocessed_counts": True,
+            "truncated_field_counts": True,
+            "truncated_unprocessed_counts": True,
             "notes": {
                 "BAD_SYNTAX": {
                     "count": 5,
                     "samples": [],
                     "vars": {"field_name": {"link": 5}},
-                    "_truncated_vars": {"field_name": True},
+                    "truncated_vars": {"field_name": True},
                 }
             },
         }

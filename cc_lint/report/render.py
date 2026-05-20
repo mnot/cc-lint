@@ -58,10 +58,10 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_run_context(run_context, finalized_at),
         render_notes_section(notes, field_counts, severity_index),
         render_field_counts_section(
-            field_counts, total_responses, bool(data.get("_truncated_field_counts"))
+            field_counts, total_responses, bool(data.get("truncated_field_counts"))
         ),
         render_unprocessed_section(
-            unprocessed_counts, bool(data.get("_truncated_unprocessed_counts"))
+            unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         ),
         render_missing_section(reachable_unseen, request_only, body_only),
     ]

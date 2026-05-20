@@ -7,9 +7,9 @@ from cc_lint.emr.job import (
     TOP_K_FIELD_COUNTS,
     TOP_K_VAR_VALUES,
     _failure_bucket,
-    _merge_globals,
-    _merge_note,
-    _sample_key,
+    merge_globals,
+    merge_note,
+    sample_key,
     merge_stats_dict,
     trim_stats_dict,
 )
@@ -94,8 +94,8 @@ class TestMergeGlobalsHLLAndFlags(unittest.TestCase):
         for i in range(50):
             hll_add(second, HLL_P_GLOBAL, f"second-{i}")
         target: Dict[str, Any] = {}
-        _merge_globals(target, {"total_responses": 1, "sites_hll": first})
-        _merge_globals(target, {"total_responses": 1, "sites_hll": second})
+        merge_globals(target, {"total_responses": 1, "sites_hll": first})
+        merge_globals(target, {"total_responses": 1, "sites_hll": second})
         self.assertIn("sites_hll", target)
         # Register-wise max merge: target register equals the larger source.
         for idx, (first_value, second_value) in enumerate(zip(first, second)):
@@ -103,18 +103,18 @@ class TestMergeGlobalsHLLAndFlags(unittest.TestCase):
 
     def test_truncation_flags_or_merge(self) -> None:
         target: Dict[str, Any] = {}
-        _merge_globals(target, {"total_responses": 0})
-        _merge_globals(target, {"total_responses": 0, "_truncated_field_counts": True})
-        _merge_globals(target, {"total_responses": 0})  # later mapper without flag
-        self.assertTrue(target["_truncated_field_counts"])
+        merge_globals(target, {"total_responses": 0})
+        merge_globals(target, {"total_responses": 0, "truncated_field_counts": True})
+        merge_globals(target, {"total_responses": 0})  # later mapper without flag
+        self.assertTrue(target["truncated_field_counts"])
 
     def test_run_context_first_wins(self) -> None:
         target: Dict[str, Any] = {}
-        _merge_globals(
+        merge_globals(
             target,
             {"total_responses": 0, "run_context": {"crawl_id": "CC-1"}},
         )
-        _merge_globals(
+        merge_globals(
             target,
             {"total_responses": 0, "run_context": {"crawl_id": "CC-2"}},
         )
@@ -128,24 +128,24 @@ class TestMergeNoteHLLAndFlags(unittest.TestCase):
         hll_add(first, HLL_P_PER_NOTE, "a.example")
         hll_add(second, HLL_P_PER_NOTE, "b.example")
         target = _empty_note()
-        _merge_note(target, {**_empty_note(), "count": 1, "sites_hll": first})
-        _merge_note(target, {**_empty_note(), "count": 1, "sites_hll": second})
+        merge_note(target, {**_empty_note(), "count": 1, "sites_hll": first})
+        merge_note(target, {**_empty_note(), "count": 1, "sites_hll": second})
         self.assertEqual(target["count"], 2)
         self.assertIn("sites_hll", target)
 
     def test_truncated_vars_or_merge(self) -> None:
         target = _empty_note()
-        _merge_note(target, {**_empty_note(), "count": 1})
-        _merge_note(
+        merge_note(target, {**_empty_note(), "count": 1})
+        merge_note(
             target,
             {
                 **_empty_note(),
                 "count": 1,
-                "_truncated_vars": {"field_name": True},
+                "truncated_vars": {"field_name": True},
             },
         )
-        _merge_note(target, {**_empty_note(), "count": 1})
-        self.assertTrue(target["_truncated_vars"]["field_name"])
+        merge_note(target, {**_empty_note(), "count": 1})
+        self.assertTrue(target["truncated_vars"]["field_name"])
 
 
 class TestTrimStatsDict(unittest.TestCase):
@@ -157,7 +157,7 @@ class TestTrimStatsDict(unittest.TestCase):
         }
         trim_stats_dict(stats)
         self.assertEqual(len(stats["field_counts"]), TOP_K_FIELD_COUNTS)
-        self.assertTrue(stats.get("_truncated_field_counts"))
+        self.assertTrue(stats.get("truncated_field_counts"))
 
     def test_keeps_highest_counts(self) -> None:
         stats: Dict[str, Any] = {
@@ -200,7 +200,7 @@ class TestTrimStatsDict(unittest.TestCase):
         kept_vars = set(note["vars"]["value"].keys())
         kept_samples = set(note["var_samples"]["value"].keys())
         self.assertEqual(kept_vars, kept_samples)
-        self.assertTrue(note["_truncated_vars"]["value"])
+        self.assertTrue(note["truncated_vars"]["value"])
 
     def test_below_cap_no_flag(self) -> None:
         stats: Dict[str, Any] = {
@@ -208,8 +208,8 @@ class TestTrimStatsDict(unittest.TestCase):
             "unprocessed_counts": {"x": 1},
         }
         trim_stats_dict(stats)
-        self.assertNotIn("_truncated_field_counts", stats)
-        self.assertNotIn("_truncated_unprocessed_counts", stats)
+        self.assertNotIn("truncated_field_counts", stats)
+        self.assertNotIn("truncated_unprocessed_counts", stats)
 
 
 class TestFailureBucket(unittest.TestCase):
@@ -234,14 +234,14 @@ class TestFailureBucket(unittest.TestCase):
 class TestSampleKey(unittest.TestCase):
     def test_prefers_site(self) -> None:
         self.assertEqual(
-            _sample_key({"url": "http://a/x", "site": "a.example"}), "a.example"
+            sample_key({"url": "http://a/x", "site": "a.example"}), "a.example"
         )
 
     def test_falls_back_to_url(self) -> None:
-        self.assertEqual(_sample_key({"url": "http://a/x"}), "http://a/x")
+        self.assertEqual(sample_key({"url": "http://a/x"}), "http://a/x")
 
     def test_empty_inputs(self) -> None:
-        self.assertEqual(_sample_key({}), "")
+        self.assertEqual(sample_key({}), "")
 
 
 if __name__ == "__main__":

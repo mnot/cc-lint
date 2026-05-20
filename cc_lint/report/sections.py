@@ -267,7 +267,7 @@ def _render_variable_stats(
     all_var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = note_data.get(
         "var_samples", {}
     ) or {}
-    truncated_vars = note_data.get("_truncated_vars") or {}
+    truncated_vars = note_data.get("truncated_vars") or {}
     blocks: List[str] = []
     for var_name, counts in var_stats.items():
         var_samples = all_var_samples.get(var_name, {})
