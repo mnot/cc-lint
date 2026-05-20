@@ -424,19 +424,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         for note_id, note in stats.get("notes", {}).items():
             yield NOTE_KEY_PREFIX + note_id, note
 
-    def combiner(
-        self, key: str, values: Generator[Any, None, None]
-    ) -> Generator[Tuple[str, Any], None, None]:
-        if key == GLOBALS_KEY:
-            merged: Dict[str, Any] = {}
-            for value in values:
-                _merge_globals(merged, value)
-            yield key, _trim_globals(merged)
-        elif key.startswith(NOTE_KEY_PREFIX):
-            merged_note: Dict[str, Any] = {"count": 0, "samples": [], "vars": {}}
-            for value in values:
-                _merge_note(merged_note, value)
-            yield key, _trim_note(merged_note)
+    # No combiner: mapper_final emits each (key, value) exactly once per
+    # mapper, so there is nothing for a combiner to fold. The mrjob default
+    # round-trips JSON for no benefit, so we override nothing here.
 
     def reducer(
         self, key: str, values: Generator[Any, None, None]
