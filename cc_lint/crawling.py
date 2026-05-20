@@ -4,7 +4,7 @@ import logging
 from typing import Iterator, Any
 import requests
 import boto3
-from warcio.archiveiterator import ArchiveIterator  # type: ignore
+from warcio.archiveiterator import ArchiveIterator
 
 
 def get_warc_stream_http(path: str) -> Any:

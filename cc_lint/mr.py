@@ -4,8 +4,8 @@ import logging
 from typing import Iterator, Any, Dict, List, Set, Optional
 
 import cc_lint.patches  # pylint: disable=wrong-import-order,unused-import
-from mrjob.job import MRJob  # type: ignore
-from mrjob.protocol import TextProtocol, JSONProtocol  # type: ignore
+from mrjob.job import MRJob
+from mrjob.protocol import TextProtocol, JSONProtocol
 from httplint.note import levels
 from httplint.field.finder import UnknownHttpField
 from cc_lint.types import SampleType, MRJobAggregateType

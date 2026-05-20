@@ -19,20 +19,26 @@ dependencies = [
     "boto3",
     "click",
     "requests",
-    "mrjob"
+    "python-dateutil"
 ]
 
 [project.optional-dependencies]
+emr = [
+    "mrjob",
+    "tqdm"
+]
 dev = [
-    "mypy", 
-    "black", 
-    "pylint", 
-    "pytest", 
-    "pytest-md", 
-    "validate-pyproject", 
+    "cc-lint[emr]",
+    "mypy",
+    "black",
+    "pylint",
+    "pytest",
+    "pytest-md",
+    "validate-pyproject",
     "build",
     "types-requests",
     "types-python-dateutil",
+    "types-tqdm",
     "boto3-stubs[s3]"
 ]
 
@@ -73,6 +79,15 @@ warn_return_any = true
 warn_unreachable = true
 strict_optional = true
 show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    "warcio.*",
+    "mrjob.*",
+    "botocore.*",
+    "boto3.*"
+]
+ignore_missing_imports = true
 
 
 [tool.pylint.basic]
