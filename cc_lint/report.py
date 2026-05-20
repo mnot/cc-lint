@@ -118,6 +118,84 @@ def _sample_li(sample: Dict[str, Any]) -> str:
 # ---- Section renderers ------------------------------------------------------
 
 
+METHODOLOGY_NOTE = (
+    "Percentages describe this Common Crawl result set, not the entire web. "
+    "Counts reflect what Common Crawl fetched (after robots.txt, WAF, paywall, "
+    "and geofence exclusions), scoped to the Tranco top-sites filter "
+    "configured for this run."
+)
+
+
+def _format_pill(label: str, value: str, modifier: str = "") -> str:
+    cls = "run-pill" if not modifier else f"run-pill {modifier}"
+    return (
+        f'<div class="{cls}">'
+        f'<span class="pill-label">{html.escape(label)}</span>'
+        f'<span class="pill-value">{html.escape(value)}</span>'
+        "</div>"
+    )
+
+
+def _render_run_context(
+    run_context: Dict[str, Any], finalized_at: Optional[str]
+) -> str:
+    pills: List[str] = []
+    crawl_id = run_context.get("crawl_id") or ""
+    if crawl_id:
+        pills.append(_format_pill("Crawl", crawl_id))
+    version = run_context.get("cc_lint_version") or ""
+    if version:
+        pills.append(_format_pill("cc-lint", f"v{version}"))
+    top_n = int(run_context.get("top_sites") or 0)
+    if top_n:
+        pills.append(
+            _format_pill(
+                "Top-sites filter",
+                f"Tranco top {_format_count(top_n)}",
+                "pill-warning",
+            )
+        )
+    else:
+        pills.append(_format_pill("Top-sites filter", "none (full sample)"))
+    sample_n = int(run_context.get("sample_top_sites") or 0)
+    if sample_n:
+        pills.append(
+            _format_pill(
+                "Sample ceiling",
+                f"Tranco top {_format_count(sample_n)}",
+            )
+        )
+    record_limit = int(run_context.get("record_limit") or 0)
+    if record_limit:
+        pills.append(
+            _format_pill(
+                "Records / WARC",
+                _format_count(record_limit),
+                "pill-warning",
+            )
+        )
+    warc_limit = int(run_context.get("warc_limit") or 0)
+    if warc_limit:
+        pills.append(
+            _format_pill(
+                "WARCs / mapper",
+                _format_count(warc_limit),
+                "pill-warning",
+            )
+        )
+    if finalized_at:
+        pills.append(_format_pill("Finalized", finalized_at))
+
+    if not pills:
+        return ""
+    return (
+        '<section class="run-context">'
+        f'<div class="run-pills">{"".join(pills)}</div>'
+        f'<p class="methodology">{html.escape(METHODOLOGY_NOTE)}</p>'
+        "</section>"
+    )
+
+
 def _render_header_stats(
     total_responses: int,
     total_notes: int,
@@ -614,6 +692,32 @@ STYLE = """
     border-radius: 0 .25rem .25rem 0;
   }
 
+  section.run-context { margin-top: 1rem; }
+  .run-pills { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 .75rem; }
+  .run-pill {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 999px;
+    padding: .15rem .65rem;
+    display: inline-flex;
+    align-items: baseline;
+    gap: .4rem;
+    font-size: .82em;
+  }
+  .run-pill.pill-warning {
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+    color: var(--warn-fg);
+  }
+  .pill-label { color: var(--muted); font-size: .9em; }
+  .pill-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .methodology {
+    color: var(--muted);
+    font-size: .85em;
+    margin: 0 0 .5rem;
+    max-width: 56rem;
+  }
+
   section { margin-top: 2.5rem; }
   section:first-of-type { margin-top: 0; }
 """
@@ -651,11 +755,14 @@ def _build_html(data: Dict[str, Any]) -> str:
     distinct_sites_estimate = (
         hll_estimate(sites_hll) if isinstance(sites_hll, list) and sites_hll else None
     )
+    run_context = data.get("run_context") or {}
+    finalized_at = data.get("finalized_at")
 
     body_parts = [
         _render_header_stats(
             total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
         ),
+        _render_run_context(run_context, finalized_at),
         _render_notes_section(notes, field_counts, severity_index),
         _render_field_counts_section(
             field_counts, total_responses, bool(data.get("_truncated_field_counts"))

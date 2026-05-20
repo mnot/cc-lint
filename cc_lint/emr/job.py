@@ -25,6 +25,7 @@ install_mrjob_pipes_compat()
 from mrjob.job import MRJob
 from mrjob.protocol import JSONProtocol
 
+import cc_lint
 from cc_lint.emr.warc_worker import (
     WarcWorkerResult,
     load_warc_worker_result,
@@ -33,6 +34,19 @@ from cc_lint.emr.warc_worker import (
 from cc_lint.hll import hll_merge
 from cc_lint.stats import StatsCollector
 from cc_lint.top_sites import load_top_sites
+
+
+def _build_run_context(options: Any) -> Dict[str, Any]:
+    """Snapshot the run-shaping flags so the report can show provenance."""
+    return {
+        "crawl_id": getattr(options, "crawl_id", "") or "",
+        "top_sites": int(getattr(options, "top_sites", 0) or 0),
+        "sample_top_sites": int(getattr(options, "sample_top_sites", 0) or 0),
+        "record_limit": int(getattr(options, "record_limit", 0) or 0),
+        "warc_limit": int(getattr(options, "limit", 0) or 0),
+        "warc_timeout_s": int(getattr(options, "warc_timeout", 0) or 0),
+        "cc_lint_version": cc_lint.__version__,
+    }
 
 
 SAMPLE_LIMIT = 5
@@ -189,6 +203,10 @@ def _merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
             target["sites_hll"] = list(src_hll)
         else:
             hll_merge(target["sites_hll"], src_hll)
+    # run_context is identical across every mapper in a single job. Take the
+    # first one we see and stick with it.
+    if "run_context" not in target and source.get("run_context"):
+        target["run_context"] = source["run_context"]
 
 
 def _trim_note(note: Dict[str, Any]) -> Dict[str, Any]:
@@ -308,6 +326,11 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             help="Path to the Tranco top-sites CSV (sent to mappers via --files)",
         )
         self.add_passthru_arg(
+            "--crawl-id",
+            default="",
+            help="Common Crawl release id (e.g. CC-MAIN-2026-12) recorded in the report",
+        )
+        self.add_passthru_arg(
             "--warc-timeout",
             type=int,
             default=900,
@@ -339,6 +362,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                     self.sample_sites = load_top_sites(
                         self.options.tranco_path, sample_limit
                     )
+            self.run_context = _build_run_context(self.options)
             self.warcs_seen = 0
             init_ms = int((time.perf_counter() - init_start) * 1000)
             self.increment_counter("timing", "mapper_init_ms", init_ms)
@@ -492,6 +516,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             "total_responses": stats.get("total_responses", 0),
             "field_counts": stats.get("field_counts", {}),
             "unprocessed_counts": stats.get("unprocessed_counts", {}),
+            "run_context": self.run_context,
         }
         if stats.get("sites_hll"):
             globals_payload["sites_hll"] = stats["sites_hll"]

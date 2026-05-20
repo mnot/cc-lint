@@ -126,6 +126,31 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("note-sites", html)
         self.assertIn("sites</span>", html)
 
+    def test_run_context_pills_render(self) -> None:
+        data = {
+            "total_responses": 100,
+            "field_counts": {},
+            "unprocessed_counts": {},
+            "notes": {},
+            "run_context": {
+                "crawl_id": "CC-MAIN-2026-12",
+                "top_sites": 50000,
+                "sample_top_sites": 10000,
+                "record_limit": 0,
+                "warc_limit": 0,
+                "warc_timeout_s": 900,
+                "cc_lint_version": "0.0.1",
+            },
+            "finalized_at": "2026-05-21T12:34:56Z",
+        }
+        html = self._render(data)
+        self.assertIn("CC-MAIN-2026-12", html)
+        self.assertIn("Tranco top 50,000", html)
+        self.assertIn("Tranco top 10,000", html)
+        self.assertIn("v0.0.1", html)
+        self.assertIn("2026-05-21T12:34:56Z", html)
+        self.assertIn("Percentages describe this Common Crawl result set", html)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,

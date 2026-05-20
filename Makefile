@@ -141,6 +141,7 @@ emr: check-s3-config venv tranco-cache
 		--jobconf mapreduce.job.reduces=$(REDUCES) \
 		--top-sites $(TOP_N) \
 		--sample-top-sites $(SAMPLE_TOP_N) \
+		--crawl-id $(CRAWL_ID) \
 		--record-limit $(RECORD_LIMIT) \
 		--output-dir $(OUTPUT_DIR)$(FULL_RUN_NAME)/ \
 		$(PATHS_PREFIX)$(FULL_RUN_NAME)/
@@ -163,6 +164,7 @@ test-emr: check-s3-config venv tranco-cache
 		--jobconf mapreduce.job.reduces=$(TEST_REDUCES) \
 		--top-sites $(LOCAL_TOP_N) \
 		--sample-top-sites $(LOCAL_TOP_N) \
+		--crawl-id $(CRAWL_ID) \
 		--record-limit $(RECORD_LIMIT) \
 		--limit $(LIMIT) \
 		--output-dir $(OUTPUT_DIR)$(TEST_RUN_NAME)/ \

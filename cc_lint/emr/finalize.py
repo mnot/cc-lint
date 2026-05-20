@@ -27,6 +27,7 @@ stats.json is written alongside the HTML report.
 """
 
 import argparse
+import datetime
 import glob
 import json
 import os
@@ -91,6 +92,9 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
     # Re-trim after the final union so the union-across-reducers can't sneak
     # past the per-mapper / per-reducer caps.
     trim_stats_dict(merged)
+    merged["finalized_at"] = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     return merged
 
 
