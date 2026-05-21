@@ -11,7 +11,11 @@ SAMPLE_TOP_N ?= 10000
 RECORD_LIMIT ?= 0
 
 MAP_TASKS ?= 1600
-REDUCES ?= 20
+# ~100-200 active note keys distribute across reducers; with the sharded
+# reducer keys 10 reducers gives 10-20 keys each, well-balanced. The
+# previous default of 20 was conservative; the per-key payload is small
+# enough that 10 saves shuffle overhead without serialising the long pole.
+REDUCES ?= 10
 TEST_MAP_TASKS ?= 20
 TEST_REDUCES ?= 1
 
