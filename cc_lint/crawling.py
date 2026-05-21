@@ -14,13 +14,7 @@ from typing import Any, Iterator, Optional
 import requests
 from warcio.archiveiterator import ArchiveIterator
 
-
-def _warc_to_wat(path: str) -> str:
-    if "/warc/" in path:
-        path = path.replace("/warc/", "/wat/")
-    if path.endswith(".warc.gz"):
-        path = path.replace(".warc.gz", ".warc.wat.gz")
-    return path
+from cc_lint.cc_paths import warc_path_to_wat
 
 
 def _open_http_stream(path: str) -> Any:
@@ -38,7 +32,7 @@ def get_warc_stream(path: str, cache_dir: Optional[str] = None) -> Any:
     ``<cache_dir>/<path>`` once (preserving the CC directory layout)
     and subsequent calls reuse the on-disk copy.
     """
-    path = _warc_to_wat(path)
+    path = warc_path_to_wat(path)
 
     if not cache_dir:
         return _open_http_stream(path)

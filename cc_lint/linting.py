@@ -8,6 +8,17 @@ from httplint import HttpResponseLinter
 logger = logging.getLogger(__name__)
 
 
+def _as_latin1(value: Any) -> bytes:
+    """Encode value as latin1, the wire encoding httplint expects.
+
+    Header field names and values come in as str (from JSON-decoded WAT
+    payloads) or already-decoded warcio str. httplint's process_*
+    methods take bytes; we replace any non-latin1 characters rather
+    than raise so a single malformed header doesn't drop the response.
+    """
+    return str(value).encode("latin1", errors="replace")
+
+
 def lint_record(record: Any) -> Optional[HttpResponseLinter]:
     """
     Lints a WARC record or WAT metadata using httplint.
@@ -75,34 +86,21 @@ def _lint_wat_record(record: Any) -> Optional[HttpResponseLinter]:
         protocol = "HTTP/1.1"
 
     linter.process_response_topline(
-        protocol.encode("latin1", errors="replace"),
+        _as_latin1(protocol),
         str(status_code).encode("ascii", errors="replace"),
-        str(status_phrase).encode("latin1", errors="replace"),
+        _as_latin1(status_phrase),
     )
 
-    # Headers
-    # response_meta["Headers"] might be a Dict[str, str] or similar.
-    # If duplicates exist, WAT might use list?
+    # WAT "Headers" is a dict; values may be a single str or a list of strs
+    # when a header repeats. Expand the list form into a flat
+    # [(name, value), ...] sequence in the same shape httplint expects.
     json_headers = response_meta.get("Headers", {})
     headers = []
     if isinstance(json_headers, dict):
         for name, val in json_headers.items():
-            # If val is list, iterate?
-            if isinstance(val, list):
-                for item in val:
-                    headers.append(
-                        (
-                            name.encode("latin1", errors="replace"),
-                            str(item).encode("latin1", errors="replace"),
-                        )
-                    )
-            else:
-                headers.append(
-                    (
-                        name.encode("latin1", errors="replace"),
-                        str(val).encode("latin1", errors="replace"),
-                    )
-                )
+            values = val if isinstance(val, list) else [val]
+            for item in values:
+                headers.append((_as_latin1(name), _as_latin1(item)))
 
     linter.process_headers(headers)
     linter.finish_content(True)
@@ -153,21 +151,15 @@ def _lint_warc_record(record: Any) -> Optional[HttpResponseLinter]:
         status_phrase = ""
 
     linter.process_response_topline(
-        protocol.encode("latin1", errors="replace"),
+        _as_latin1(protocol),
         str(status_code).encode("ascii", errors="replace"),
-        status_phrase.encode("latin1", errors="replace"),
+        _as_latin1(status_phrase),
     )
 
-    # Headers
-    headers = []
-    for name, value in http_headers.headers:
-        headers.append(
-            (
-                name.encode("latin1", errors="replace"),
-                value.encode("latin1", errors="replace"),
-            )
-        )
-
+    headers = [
+        (_as_latin1(name), _as_latin1(value))
+        for name, value in http_headers.headers
+    ]
     linter.process_headers(headers)
 
     # Body

@@ -17,17 +17,13 @@ import boto3
 from botocore.config import Config
 from warcio.archiveiterator import ArchiveIterator
 
+from cc_lint.cc_paths import warc_path_to_wat
+
+# Re-export for backward compatibility with existing test imports.
+__all__ = ["create_s3_client", "iter_wat_records", "warc_path_to_wat"]
+
 COMMON_CRAWL_BUCKET = "commoncrawl"
 ProgressCallback = Callable[[str], None]
-
-
-def warc_path_to_wat(path: str) -> str:
-    """Rewrite a Common Crawl WARC path to its sibling WAT path."""
-    if "/warc/" in path:
-        path = path.replace("/warc/", "/wat/")
-    if path.endswith(".warc.gz"):
-        path = path.replace(".warc.gz", ".warc.wat.gz")
-    return path
 
 
 def create_s3_client() -> Any:
