@@ -24,9 +24,7 @@ Usage:
     python -m cc_lint.emr.finalize <results-dir> <output.html>
 
 HTML is written to ``<output.html>`` and a Markdown sibling is written to
-``<output>.md`` (cc_lint.report.default_markdown_path). The merged stats
-dict is no longer persisted to disk by default; pass --stats-json PATH
-to dump it for debugging.
+``<output>.md`` (cc_lint.report.default_markdown_path).
 """
 
 import argparse
@@ -117,27 +115,13 @@ def main() -> None:
         "output_html",
         help="Path to write the rendered HTML report",
     )
-    parser.add_argument(
-        "--stats-json",
-        default=None,
-        help=(
-            "Optional path to also dump the merged stats dict as JSON for "
-            "debugging. Not written by default."
-        ),
-    )
     args = parser.parse_args()
 
     stats = merge_results(args.results_dir)
-
     render_report(stats, args.output_html)
     md_path = default_markdown_path(args.output_html)
     print(f"Wrote HTML report to {args.output_html}")
     print(f"Wrote Markdown report to {md_path}")
-
-    if args.stats_json:
-        with open(args.stats_json, "w", encoding="utf-8") as stats_file:
-            json.dump(stats, stats_file, indent=2)
-        print(f"Wrote merged stats to {args.stats_json}")
 
 
 if __name__ == "__main__":

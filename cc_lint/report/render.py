@@ -1,12 +1,11 @@
 """Top-level orchestration for the cc-lint reports.
 
-Two callers feed this module: the CLI passes a stats.json file path; the
-EMR finalizer passes the in-memory dict it just merged from part-* shards.
-Both paths produce HTML at the configured output path plus a Markdown
-sibling at the same path with the extension swapped to ``.md``.
+Both the local CLI and the EMR finalizer pass an in-memory stats dict
+(produced by ``StatsCollector.to_dict()`` or by merging sharded part-*
+records). Each call produces HTML at the configured output path plus a
+Markdown sibling at the same path with the extension swapped to ``.md``.
 """
 
-import json
 import os
 from typing import Any, Dict, Optional
 
@@ -115,15 +114,3 @@ def render_report(
     md_path = markdown_path or default_markdown_path(html_path)
     with open(md_path, "w", encoding="utf-8") as out_handle:
         out_handle.write(md_text)
-
-
-def generate_report(stats_file: str, output_file: str) -> None:
-    """Render ``stats_file`` (JSON) into HTML + Markdown reports.
-
-    Kept as a thin file-loading wrapper around :func:`render_report` so
-    the CLI's ``cc-lint report --input stats.json --output report.html``
-    path keeps working.
-    """
-    with open(stats_file, "r", encoding="utf-8") as file_handle:
-        data = json.load(file_handle)
-    render_report(data, output_file)

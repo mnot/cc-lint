@@ -19,8 +19,7 @@ help:
 	@echo "  make tidy          Format Python code"
 	@echo "  make typecheck     Run mypy over package and tests"
 	@echo "  make lint          Run pylint over package and tests"
-	@echo "  make stats.json    Run a local lint against paths.txt"
-	@echo "  make report.html   Render report.html + report.md from stats.json"
+	@echo "  make report.html   Run a local lint and render report.html + report.md"
 	@echo "  make test-emr      Run an EMR smoke test"
 	@echo "  make emr           Run the full EMR analysis"
 	@echo "  make report RESULTS_DIR=results/...  Re-render saved EMR reports"
@@ -66,13 +65,9 @@ check-s3-config:
 paths.txt:
 	curl -sSf https://data.commoncrawl.org/crawl-data/$(LOCAL_CRAWL_ID)/warc.paths.gz | gunzip > $@
 
-.PHONY: stats.json
-stats.json: paths.txt
-	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt --top-sites $(LOCAL_TOP_N) --output $@
-
 .PHONY: report.html
-report.html:
-	PYTHONPATH=$(VENV) $(VENV)/cc-lint report --input stats.json --output $@
+report.html: paths.txt
+	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt --top-sites $(LOCAL_TOP_N) --output $@
 
 .PHONY: test
 test: test_py

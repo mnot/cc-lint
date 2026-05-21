@@ -163,45 +163,9 @@ class TestFinalizeCli(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(os.path.exists(html_path))
             self.assertTrue(os.path.exists(md_path))
-            # stats.json should NOT be persisted unless requested.
+            # stats.json is no longer emitted; finalize writes only the
+            # rendered report files.
             self.assertFalse(os.path.exists(stats_json_path))
-
-    def test_stats_json_writes_dump(self) -> None:
-        with tempfile.TemporaryDirectory() as results:
-            _write_part(
-                os.path.join(results, "part-00000"),
-                [
-                    (
-                        "globals",
-                        {
-                            "total_responses": 1,
-                            "field_counts": {},
-                            "unprocessed_counts": {},
-                        },
-                    ),
-                ],
-            )
-            html_path = os.path.join(results, "report.html")
-            dump_path = os.path.join(results, "debug.json")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "cc_lint.emr.finalize",
-                    results,
-                    html_path,
-                    "--stats-json",
-                    dump_path,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(os.path.exists(dump_path))
-            with open(dump_path, "r", encoding="utf-8") as dump_file:
-                data = json.load(dump_file)
-            self.assertEqual(data["total_responses"], 1)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,12 @@
-"""Smoke tests for cc_lint.report's HTML renderer."""
+"""Smoke tests for cc_lint.report's HTML + Markdown renderer."""
 
-import json
 import os
 import tempfile
 import unittest
 from typing import Any, Dict
 
 from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
-from cc_lint.report import generate_report
+from cc_lint.report import render_report
 
 
 SAMPLE_STATS = {
@@ -41,22 +40,16 @@ SAMPLE_STATS = {
 class TestRenderer(unittest.TestCase):
     def _render(self, data: Dict[str, Any]) -> str:
         with tempfile.TemporaryDirectory() as tmp:
-            stats_path = os.path.join(tmp, "stats.json")
             html_path = os.path.join(tmp, "report.html")
-            with open(stats_path, "w", encoding="utf-8") as stats_file:
-                json.dump(data, stats_file)
-            generate_report(stats_path, html_path)
+            render_report(data, html_path)
             with open(html_path, "r", encoding="utf-8") as html_file:
                 return html_file.read()
 
     def _render_both(self, data: Dict[str, Any]) -> tuple[str, str]:
         with tempfile.TemporaryDirectory() as tmp:
-            stats_path = os.path.join(tmp, "stats.json")
             html_path = os.path.join(tmp, "report.html")
             md_path = os.path.join(tmp, "report.md")
-            with open(stats_path, "w", encoding="utf-8") as stats_file:
-                json.dump(data, stats_file)
-            generate_report(stats_path, html_path)
+            render_report(data, html_path)
             with open(html_path, "r", encoding="utf-8") as html_file:
                 html_text = html_file.read()
             with open(md_path, "r", encoding="utf-8") as md_file:

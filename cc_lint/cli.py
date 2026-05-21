@@ -1,5 +1,4 @@
 import gzip
-import json
 import logging
 from typing import List, Optional, Set
 
@@ -7,7 +6,7 @@ import click
 
 from .crawling import get_warc_stream, iter_warc_records
 from .linting import lint_record
-from .report import generate_report
+from .report import default_markdown_path, render_report
 from .stats import StatsCollector
 from .top_sites import get_top_sites_path, is_in_top_sites, load_top_sites
 
@@ -71,7 +70,11 @@ def _run_lint_loop(  # pylint: disable=too-many-positional-arguments
     help="Path to a local file containing WARC paths (one per line, optionally .gz)",
 )
 @click.option("--limit", default=1, help="Number of WARC files to process")
-@click.option("--output", default="stats.json", help="Output JSON file")
+@click.option(
+    "--output",
+    default="report.html",
+    help="Output HTML report path. A Markdown sibling is written alongside.",
+)
 @click.option(
     "--record-limit",
     default=0,
@@ -91,7 +94,7 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
     cache_dir: Optional[str],
     top_sites: Optional[int],
 ) -> None:
-    """Run httplint on Common Crawl WARC files."""
+    """Run httplint on Common Crawl WAT files and render an HTML + Markdown report."""
     logger.info("Reading paths from %s", paths_file)
     warc_paths = _load_paths(paths_file)
     if warc_paths is None:
@@ -103,9 +106,10 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
     stats = StatsCollector()
     _run_lint_loop(warc_paths, limit, record_limit, cache_dir, top_sites_set, stats)
 
-    with open(output, "w", encoding="utf-8") as out_file:
-        json.dump(stats.to_dict(), out_file, indent=2)
-    logger.info("Done. Stats written to %s", output)
+    render_report(stats.to_dict(), output)
+    logger.info(
+        "Done. Wrote %s and %s", output, default_markdown_path(output)
+    )
 
 
 def _process_single_warc(
@@ -146,22 +150,6 @@ def _process_single_warc(
         # Broad on purpose: one bad WARC must not abort the run.
         logger.error(
             "Error streaming %s (%s): %s", warc_path, type(exc).__name__, exc
-        )
-
-
-@cli.command(name="report")
-@click.option("--input", "input_file", required=True, help="Input stats.json file")
-@click.option("--output", required=True, help="Output HTML file")
-def report_cc(input_file: str, output: str) -> None:
-    """Generate an HTML report from statistics."""
-    try:
-        generate_report(input_file, output)
-        logger.info("Report generated at %s", output)
-    except Exception as exc:  # pylint: disable=broad-except
-        # Broad on purpose: surface any render failure to the operator with
-        # the exception type so they can triage without a stack trace.
-        logger.error(
-            "Error generating report (%s): %s", type(exc).__name__, exc
         )
 
 

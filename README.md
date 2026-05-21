@@ -28,19 +28,18 @@ optional `[emr]` group (`mrjob`, `tqdm`) needed to drive EMR jobs.
 ### Local lint run
 
 The `cc-lint` CLI fetches one or more WAT files over HTTP from
-`data.commoncrawl.org` and writes a `stats.json`:
+`data.commoncrawl.org`, runs httplint over their response metadata,
+and renders an HTML + Markdown report:
 
 ```bash
 # Put a few WARC paths in paths.txt, one per line:
 echo crawl-data/CC-MAIN-2024-18/segments/.../warc/CC-MAIN-...warc.gz > paths.txt
 
-make stats.json   # runs cc-lint lint with LOCAL_TOP_N as the top-sites filter
-make report.html  # renders stats.json into report.html
+make report.html  # lints and writes report.html plus report.md
 ```
 
-Both targets are thin wrappers around the `cc-lint` CLI; see
-`cc-lint lint --help` and `cc-lint report --help` for the full
-option set.
+The Make target wraps `cc-lint lint`; see `cc-lint lint --help` for the
+full option set.
 
 ---
 
@@ -100,7 +99,7 @@ make test-emr
 ```
 
 Successful runs land in `results/test-<RUN_ID>/` with `part-*`
-records from EMR, a merged `stats.json`, and a rendered `report.html`.
+records from EMR plus the rendered `report.html` and `report.md`.
 
 ### Full run
 
@@ -120,9 +119,9 @@ This pipeline does, in order:
    single per-mapper dict.
 3. `aws s3 sync` pulls the reducer output into
    `results/$(CRAWL_ID)-$(RUN_ID)/`.
-4. `cc_lint.emr.finalize` merges every `"summary"` record from the
-   `part-*` files into a single `stats.json` and renders
-   `report.html`.
+4. `cc_lint.emr.finalize` merges the sharded `globals` / `note:*` /
+   `csp_sizes` records from the `part-*` files and renders
+   `report.html` + `report.md`.
 
 ### Re-rendering an existing run
 
@@ -181,7 +180,7 @@ cc_lint/
     ├── warc_source.py  requester-pays S3 + heartbeat WAT iterator
     ├── warc_worker.py  fork-isolated per-WARC worker + pickle result
     ├── split_paths.py  paths.gz -> N S3 chunk files
-    ├── finalize.py     part-* -> merged stats.json + report.html
+    ├── finalize.py     part-* -> rendered report.html + report.md
     ├── timing.py       EMR stderr.gz timing/failure summary
     └── compat.py       Python 3.13+ `pipes` shim for mrjob
 ```
