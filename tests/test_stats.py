@@ -42,7 +42,9 @@ def _linter_for(url: str) -> HttpResponseLinter:
 
 
 class TestStatsCollectorAccumulation(unittest.TestCase):
-    def test_warn_notes_counted_info_notes_ignored(self) -> None:
+    def test_warn_and_info_notes_both_captured(self) -> None:
+        # As of Phase 6 the collector captures every fired note level
+        # (BAD/WARN/INFO/GOOD); the report decides which to surface.
         stats = StatsCollector()
         for note_cls, url in [
             (_WarnNote, "http://a.example/"),
@@ -50,15 +52,24 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
             (_InfoNote, "http://c.example/"),
         ]:
             linter = _linter_for(url)
-            # Inject a fake note into the linter's notes list so process_linter
-            # can read it.
             note: Any = note_cls("s")
             _attach_note(linter, note)
             stats.process_linter(linter)
         self.assertEqual(stats.total_responses, 3)
-        self.assertIn(_WarnNote.__name__, stats.note_data)
         self.assertEqual(stats.note_data[_WarnNote.__name__]["count"], 2)
-        self.assertNotIn(_InfoNote.__name__, stats.note_data)
+        self.assertEqual(stats.note_data[_InfoNote.__name__]["count"], 1)
+        # Per-response severity rollup: 2 responses bucketed warn, 1 info.
+        self.assertEqual(stats.severity_counts.get("warn"), 2)
+        self.assertEqual(stats.severity_counts.get("info"), 1)
+
+    def test_clean_response_buckets_to_clean(self) -> None:
+        # A response with no warn/bad/info/good notes still increments the
+        # 'clean' bucket so the population totals add to total_responses.
+        stats = StatsCollector()
+        linter = _linter_for("http://nothing.example/")
+        stats.process_linter(linter)
+        self.assertEqual(stats.total_responses, 1)
+        self.assertEqual(stats.severity_counts.get("clean"), 1)
 
     def test_samples_deduped_by_site(self) -> None:
         stats = StatsCollector()

@@ -211,6 +211,37 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Content-Security-Policy size by site", md)
         self.assertIn("| 1-99 B |", md)
 
+    def test_health_summary_renders(self) -> None:
+        data = dict(SAMPLE_STATS)
+        data["severity_counts"] = {
+            "bad": 30,
+            "warn": 200,
+            "info": 400,
+            "good": 50,
+            "clean": 320,
+        }
+        html, md = self._render_both(data)
+        self.assertIn("Response health", html)
+        self.assertIn("health-bar", html)
+        self.assertIn("badge-clean", html)
+        self.assertIn("Response health", md)
+        self.assertIn("`BAD`", md)
+        self.assertIn("`Clean`", md)
+
+    def test_category_grouping(self) -> None:
+        html, md = self._render_both(SAMPLE_STATS)
+        # BAD_SYNTAX and CC_DUP are both real httplint notes that have a
+        # category attribute (GENERAL and CACHING respectively). The report
+        # should surface category section headings.
+        self.assertIn("Findings by category", html)
+        self.assertIn("note-category", html)
+        # CC_DUP belongs to httplint's CACHING category.
+        self.assertIn("Caching", html)
+        # Markdown should contain a category overview table and a per-category
+        # h3 heading.
+        self.assertIn("Findings by category", md)
+        self.assertIn("### Caching", md)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,

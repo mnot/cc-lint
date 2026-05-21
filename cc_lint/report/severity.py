@@ -13,9 +13,14 @@ httplint's source; rather than re-derive on every run, we keep them as
 explicit constants so the report can label the buckets clearly.
 """
 
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from httplint.note import Note, levels
+from httplint.note import Note, categories, levels
+
+
+# Stable ordering of severities for sorting and for the "highest first"
+# tie-break inside category sections.
+SEVERITY_ORDER = {"bad": 4, "warn": 3, "info": 2, "good": 1}
 
 
 def _all_note_subclasses(cls: Any) -> Set[Any]:
@@ -24,8 +29,20 @@ def _all_note_subclasses(cls: Any) -> Set[Any]:
     )
 
 
+def _level_to_severity(level: Any) -> Optional[str]:
+    if level == levels.BAD:
+        return "bad"
+    if level == levels.WARN:
+        return "warn"
+    if level == levels.INFO:
+        return "info"
+    if level == levels.GOOD:
+        return "good"
+    return None
+
+
 def build_severity_index() -> Dict[str, str]:
-    """Map note class name -> 'bad' or 'warn'.
+    """Map note class name -> severity string ('bad'/'warn'/'info'/'good').
 
     Excludes Note subclasses defined inside our own tests package so test-shim
     mocks don't show up in the rendered report.
@@ -34,12 +51,50 @@ def build_severity_index() -> Dict[str, str]:
     for note_cls in _all_note_subclasses(Note):
         if note_cls.__module__.startswith("tests."):
             continue
-        level = getattr(note_cls, "level", None)
-        if level == levels.BAD:
-            index[note_cls.__name__] = "bad"
-        elif level == levels.WARN:
-            index[note_cls.__name__] = "warn"
+        severity = _level_to_severity(getattr(note_cls, "level", None))
+        if severity is not None:
+            index[note_cls.__name__] = severity
     return index
+
+
+def build_category_index() -> Dict[str, str]:
+    """Map note class name -> category enum name (e.g. 'CACHING').
+
+    Read from the class attribute, so notes whose category is overridden
+    at firing time will still display under their declared class category.
+    Acceptable approximation for the per-category report sections.
+    """
+    index: Dict[str, str] = {}
+    for note_cls in _all_note_subclasses(Note):
+        if note_cls.__module__.startswith("tests."):
+            continue
+        category = getattr(note_cls, "category", None)
+        if isinstance(category, categories):
+            index[note_cls.__name__] = category.name
+    return index
+
+
+def category_display_order() -> List[str]:
+    """Return category enum names in the order we want to render them.
+
+    Roughly: protocol correctness up front, then content / negotiation,
+    then GENERAL last as a catch-all.
+    """
+    preferred = [
+        "CACHING",
+        "SECURITY",
+        "COOKIES",
+        "CORS",
+        "CONNEG",
+        "RANGE",
+        "VALIDATION",
+        "CONNECTION",
+        "GENERAL",
+    ]
+    known = {member.name for member in categories}
+    # Preserve preferred order; append any enum values we didn't list.
+    seen = set(preferred)
+    return preferred + [name for name in sorted(known) if name not in seen]
 
 
 def possible_note_ids(severity_index: Dict[str, str]) -> Set[str]:

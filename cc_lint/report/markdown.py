@@ -8,11 +8,13 @@ top headers) and elides interactive affordances like the unseen-notes
 collapsibles or the per-(var, val) sample lists.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import (
+    build_category_index,
     build_severity_index,
+    category_display_order,
     classify_unseen,
     possible_note_ids,
 )
@@ -161,22 +163,136 @@ def _render_note_block(
     return lines
 
 
+_SEVERITY_ORDER_MD = {"bad": 4, "warn": 3, "info": 2, "good": 1}
+
+_CATEGORY_LABELS_MD = {
+    "GENERAL": "General",
+    "CONNECTION": "Connection",
+    "SECURITY": "Browser security",
+    "CORS": "Cross-origin resource sharing",
+    "COOKIES": "Cookies",
+    "CONNEG": "Content negotiation",
+    "CACHING": "Caching",
+    "VALIDATION": "Validation",
+    "RANGE": "Partial content",
+    "UNCATEGORIZED": "Uncategorized",
+}
+
+
+def _pretty_category_md(category: str) -> str:
+    return _CATEGORY_LABELS_MD.get(category, category.title())
+
+
+def _render_health_section(severity_counts: Dict[str, int]) -> List[str]:
+    if not severity_counts:
+        return []
+    total = sum(int(v) for v in severity_counts.values())
+    if total <= 0:
+        return []
+    lines = [
+        "## Response health",
+        "",
+        "Each response is bucketed by the most severe httplint finding it "
+        "produced. Per-response, not per-site.",
+        "",
+        "| Severity | Responses | % |",
+        "| --- | --- | --- |",
+    ]
+    for severity, label in (
+        ("bad", "BAD"),
+        ("warn", "WARN"),
+        ("info", "INFO"),
+        ("good", "GOOD"),
+        ("clean", "Clean"),
+    ):
+        count = int(severity_counts.get(severity, 0))
+        if count == 0:
+            continue
+        pct = count / total * 100
+        lines.append(f"| `{label}` | {_fmt_count(count)} | {pct:.1f}% |")
+    lines.append("")
+    return lines
+
+
+def _render_category_overview(
+    notes: Dict[str, Any],
+    category_index: Dict[str, str],
+    category_order: List[str],
+) -> List[str]:
+    if not notes:
+        return []
+    by_category: Dict[str, Tuple[int, int]] = {}
+    for note_id, data in notes.items():
+        category = category_index.get(note_id, "UNCATEGORIZED")
+        count = int(data.get("count", 0)) if isinstance(data, dict) else 0
+        prev_occ, prev_types = by_category.get(category, (0, 0))
+        by_category[category] = (prev_occ + count, prev_types + 1)
+    if not by_category:
+        return []
+    seen_in_order = [c for c in category_order if c in by_category]
+    for category in by_category:
+        if category not in seen_in_order:
+            seen_in_order.append(category)
+    lines = [
+        "## Findings by category",
+        "",
+        "| Category | Occurrences | Note types fired |",
+        "| --- | --- | --- |",
+    ]
+    for category in seen_in_order:
+        occurrences, types = by_category[category]
+        lines.append(
+            f"| {_pretty_category_md(category)} | {_fmt_count(occurrences)} | "
+            f"{_fmt_count(types)} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _render_notes_section(
     notes: Dict[str, Any],
     field_counts: Dict[str, int],
     severity_index: Dict[str, str],
+    category_index: Dict[str, str],
+    category_order: List[str],
 ) -> List[str]:
     if not notes:
         return []
-    sorted_notes = sorted(
-        notes.items(),
-        key=lambda item: item[1].get("count", 0),
-        reverse=True,
-    )
-    lines = ["## Notes", ""]
-    for note_id, data in sorted_notes:
+    by_category: Dict[str, List[Tuple[str, Dict[str, Any], str]]] = {}
+    for note_id, data in notes.items():
+        category = category_index.get(note_id, "UNCATEGORIZED")
         severity = severity_index.get(note_id, "warn")
-        lines.extend(_render_note_block(note_id, data, severity, field_counts))
+        by_category.setdefault(category, []).append((note_id, data, severity))
+    ordered = [c for c in category_order if c in by_category]
+    for category in by_category:
+        if category not in ordered:
+            ordered.append(category)
+    lines = ["## Notes", ""]
+    for category in ordered:
+        entries = sorted(
+            by_category[category],
+            key=lambda triple: (
+                -_SEVERITY_ORDER_MD.get(triple[2], 0),
+                -int(triple[1].get("count", 0))
+                if isinstance(triple[1], dict)
+                else 0,
+                triple[0],
+            ),
+        )
+        total_occ = sum(
+            int(d.get("count", 0)) if isinstance(d, dict) else 0
+            for _, d, _s in entries
+        )
+        lines.append(
+            f"### {_pretty_category_md(category)} "
+            f"_({_fmt_count(total_occ)} occurrences, "
+            f"{_fmt_count(len(entries))} note types)_"
+        )
+        lines.append("")
+        for note_id, data, severity in entries:
+            lines.extend(
+                _render_note_block(note_id, data, severity, field_counts)
+            )
     return lines
 
 
@@ -294,12 +410,15 @@ def _count_total_notes(notes: Dict[str, Any]) -> int:
 
 def render_markdown(data: Dict[str, Any]) -> str:
     severity_index = build_severity_index()
+    category_index = build_category_index()
+    category_order = category_display_order()
     possible_ids = possible_note_ids(severity_index)
 
     total_responses = int(data.get("total_responses", 0))
     notes = data.get("notes") or {}
     field_counts: Dict[str, int] = data.get("field_counts") or {}
     unprocessed_counts: Dict[str, int] = data.get("unprocessed_counts") or {}
+    severity_counts = data.get("severity_counts") or {}
     total_notes = _count_total_notes(notes)
     seen_note_ids = set(notes.keys())
     reachable_unseen, request_only, body_only = classify_unseen(
@@ -319,7 +438,15 @@ def render_markdown(data: Dict[str, Any]) -> str:
             total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
         )
     )
-    lines.extend(_render_notes_section(notes, field_counts, severity_index))
+    lines.extend(_render_health_section(severity_counts))
+    lines.extend(
+        _render_category_overview(notes, category_index, category_order)
+    )
+    lines.extend(
+        _render_notes_section(
+            notes, field_counts, severity_index, category_index, category_order
+        )
+    )
     lines.extend(
         _render_field_counts(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))

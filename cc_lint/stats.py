@@ -15,6 +15,24 @@ from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
 
 
+def _level_to_severity(level: Any) -> Optional[str]:
+    """Map an httplint ``levels`` value to the canonical severity string.
+
+    Returns one of ``"bad"``, ``"warn"``, ``"info"``, ``"good"`` for
+    recognised levels, or ``None`` for anything else (defensive against
+    levels we haven't seen).
+    """
+    if level == levels.BAD:
+        return "bad"
+    if level == levels.WARN:
+        return "warn"
+    if level == levels.INFO:
+        return "info"
+    if level == levels.GOOD:
+        return "good"
+    return None
+
+
 def _header_value_byte_len(value: Any) -> int:
     """Best-effort byte length of a header field value as it appeared on the wire.
 
@@ -182,6 +200,13 @@ class StatsCollector:
         # maximum so the report's histogram counts each site once at the
         # largest CSP it ever served. 0 means "site seen, no CSP."
         self.csp_max_by_site: Dict[str, int] = {}
+        # Per-response health rollup. For each response we bucket by the
+        # most severe note that fired (bad > warn > info > good > clean),
+        # so the report can show "X% of responses produced no findings".
+        # This is intentionally per-response, not per-site: it's a
+        # population-level summary of what httplint thought of each
+        # crawled response, not a claim about specific sites.
+        self.severity_counts: Counter[str] = Counter()
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -191,11 +216,23 @@ class StatsCollector:
         site = normalize_site(getattr(linter, "base_uri", None))
         if site:
             hll_add(self.sites_hll, HLL_P_GLOBAL, site)
+        # Track the maximum severity fired on this response so we can roll
+        # it up into severity_counts after the note loop.
+        max_severity: Optional[str] = None
+        severity_order = {"bad": 4, "warn": 3, "info": 2, "good": 1}
         for note in linter.notes:
-            if note.level not in [levels.WARN, levels.BAD]:
+            level = getattr(note, "level", None)
+            severity = _level_to_severity(level)
+            if severity is None:
                 continue
+            if (
+                max_severity is None
+                or severity_order[severity] > severity_order[max_severity]
+            ):
+                max_severity = severity
             self._process_note(note, linter, site)
 
+        self.severity_counts[max_severity or "clean"] += 1
         self._process_headers(linter, site)
 
     def _process_note(
@@ -307,4 +344,5 @@ class StatsCollector:
             "unprocessed_counts": dict(self.unprocessed_counts),
             "sites_hll": self.sites_hll,
             "csp_max_by_site": dict(self.csp_max_by_site),
+            "severity_counts": dict(self.severity_counts),
         }

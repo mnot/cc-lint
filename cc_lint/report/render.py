@@ -13,16 +13,20 @@ from cc_lint.hll import hll_estimate
 from cc_lint.report.markdown import render_markdown
 from cc_lint.report.sections import (
     count_total_notes,
+    render_category_overview,
     render_csp_section,
     render_field_counts_section,
     render_header_stats,
+    render_health_summary,
     render_missing_section,
     render_notes_section,
     render_run_context,
     render_unprocessed_section,
 )
 from cc_lint.report.severity import (
+    build_category_index,
     build_severity_index,
+    category_display_order,
     classify_unseen,
     possible_note_ids,
 )
@@ -31,6 +35,8 @@ from cc_lint.report.styles import STYLE
 
 def _build_html(data: Dict[str, Any]) -> str:
     severity_index = build_severity_index()
+    category_index = build_category_index()
+    category_order = category_display_order()
     possible_ids = possible_note_ids(severity_index)
 
     total_responses = int(data.get("total_responses", 0))
@@ -52,13 +58,18 @@ def _build_html(data: Dict[str, Any]) -> str:
     finalized_at = data.get("finalized_at")
 
     csp_sizes = data.get("csp_max_by_site") or {}
+    severity_counts = data.get("severity_counts") or {}
 
     body_parts = [
         render_header_stats(
             total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
         ),
         render_run_context(run_context, finalized_at),
-        render_notes_section(notes, field_counts, severity_index),
+        render_health_summary(severity_counts),
+        render_category_overview(notes, category_index, category_order),
+        render_notes_section(
+            notes, field_counts, severity_index, category_index, category_order
+        ),
         render_field_counts_section(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
         ),

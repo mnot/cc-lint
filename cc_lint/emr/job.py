@@ -198,6 +198,8 @@ def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_counts(target["field_counts"], source.get("field_counts", {}))
     target.setdefault("unprocessed_counts", {})
     _merge_counts(target["unprocessed_counts"], source.get("unprocessed_counts", {}))
+    target.setdefault("severity_counts", {})
+    _merge_counts(target["severity_counts"], source.get("severity_counts", {}))
     for flag in ("truncated_field_counts", "truncated_unprocessed_counts"):
         if source.get(flag):
             target[flag] = True
@@ -564,6 +566,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             "total_responses": stats.get("total_responses", 0),
             "field_counts": stats.get("field_counts", {}),
             "unprocessed_counts": stats.get("unprocessed_counts", {}),
+            "severity_counts": stats.get("severity_counts", {}),
             "run_context": self.run_context,
         }
         if stats.get("sites_hll"):

@@ -329,28 +329,192 @@ def _render_note_card(
     )
 
 
+_SEVERITY_ORDER = {"bad": 4, "warn": 3, "info": 2, "good": 1}
+
+
+def _note_sort_key(
+    item: Tuple[str, Dict[str, Any]]
+) -> Tuple[int, int, str]:
+    """Sort within a category: by severity desc, then occurrence count desc."""
+    note_id, data = item
+    severity = data.get("_severity", "warn") if isinstance(data, dict) else "warn"
+    count = int(data.get("count", 0)) if isinstance(data, dict) else 0
+    return (-_SEVERITY_ORDER.get(severity, 0), -count, note_id)
+
+
 def render_notes_section(
     notes: Dict[str, Any],
     field_counts: Dict[str, int],
     severity_index: Dict[str, str],
+    category_index: Dict[str, str],
+    category_order: List[str],
 ) -> str:
-    sorted_notes = sorted(
-        notes.items(),
-        key=lambda item: item[1].get("count", 0),
-        reverse=True,
-    )
-    if not sorted_notes:
+    """Render notes grouped by httplint category.
+
+    Notes whose class isn't in the category index (test shims or unknown
+    classes) are bucketed under "UNCATEGORIZED" at the end.
+    """
+    if not notes:
         return ""
-    cards = [
-        _render_note_card(
-            note_id, data, severity_index.get(note_id, "warn"), field_counts
+
+    # Group note_id -> data by category. Decorate each note with its
+    # severity so the sort key can read it without crossing back to the
+    # severity index.
+    by_category: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+    for note_id, data in notes.items():
+        category = category_index.get(note_id, "UNCATEGORIZED")
+        severity = severity_index.get(note_id, "warn")
+        if isinstance(data, dict):
+            data["_severity"] = severity
+        by_category.setdefault(category, []).append((note_id, data))
+
+    sections: List[str] = []
+    ordered_categories = [c for c in category_order if c in by_category]
+    # Any categories not in the configured order (e.g. UNCATEGORIZED).
+    for category in by_category:
+        if category not in ordered_categories:
+            ordered_categories.append(category)
+
+    for category in ordered_categories:
+        entries = sorted(by_category[category], key=_note_sort_key)
+        total_occ = sum(
+            int(d.get("count", 0)) if isinstance(d, dict) else 0
+            for _, d in entries
         )
-        for note_id, data in sorted_notes
-    ]
+        cards = [
+            _render_note_card(
+                note_id, data, severity_index.get(note_id, "warn"), field_counts
+            )
+            for note_id, data in entries
+        ]
+        sections.append(
+            f'<section class="note-category" id="cat-{html.escape(category.lower())}">'
+            f'<h3>{html.escape(_pretty_category(category))} '
+            f'<span class="cat-totals">{_format_count(total_occ)} occurrences '
+            f'across {_format_count(len(entries))} note types</span></h3>'
+            f'<div class="note-list">{"".join(cards)}</div>'
+            "</section>"
+        )
+
     return (
         '<section id="notes">'
         '<h2>Notes</h2>'
-        f'<div class="note-list">{"".join(cards)}</div>'
+        f'{"".join(sections)}'
+        "</section>"
+    )
+
+
+_CATEGORY_LABELS = {
+    "GENERAL": "General",
+    "CONNECTION": "Connection",
+    "SECURITY": "Browser security",
+    "CORS": "Cross-origin resource sharing",
+    "COOKIES": "Cookies",
+    "CONNEG": "Content negotiation",
+    "CACHING": "Caching",
+    "VALIDATION": "Validation",
+    "RANGE": "Partial content",
+    "UNCATEGORIZED": "Uncategorized",
+}
+
+
+def _pretty_category(category: str) -> str:
+    return _CATEGORY_LABELS.get(category, category.title())
+
+
+def render_health_summary(severity_counts: Dict[str, int]) -> str:
+    """Render the per-response health rollup as a horizontal bar.
+
+    severity_counts has buckets: bad / warn / info / good / clean. The
+    counts are per-response, not per-site; together they sum to
+    total_responses analysed.
+    """
+    if not severity_counts:
+        return ""
+    total = sum(int(v) for v in severity_counts.values())
+    if total <= 0:
+        return ""
+    rows = []
+    bar_segments = []
+    for severity, label in (
+        ("bad", "BAD"),
+        ("warn", "WARN"),
+        ("info", "INFO"),
+        ("good", "GOOD"),
+        ("clean", "Clean"),
+    ):
+        count = int(severity_counts.get(severity, 0))
+        if count == 0:
+            continue
+        pct = count / total * 100
+        rows.append(
+            f"<tr>"
+            f'<td><span class="badge badge-{severity}">{html.escape(label)}</span></td>'
+            f"<td>{_format_count(count)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f"</tr>"
+        )
+        bar_segments.append(
+            f'<span class="health-seg health-seg-{severity}" '
+            f'style="width:{pct:.3f}%" title="{html.escape(label)}: '
+            f'{pct:.1f}%"></span>'
+        )
+    return (
+        '<section id="health">'
+        '<h2>Response health</h2>'
+        '<p class="muted">Each response is bucketed by the most severe '
+        "httplint finding it produced. <em>Clean</em> means httplint found "
+        "nothing worth reporting on that response. Per-response, not "
+        "per-site &mdash; popular sites contribute more responses.</p>"
+        f'<div class="health-bar">{"".join(bar_segments)}</div>'
+        '<table class="data-table">'
+        "<thead><tr><th>Severity</th><th>Responses</th><th>%</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
+def render_category_overview(
+    notes: Dict[str, Any], category_index: Dict[str, str], category_order: List[str]
+) -> str:
+    """Compact table mapping each category to its total occurrences."""
+    if not notes:
+        return ""
+    by_category: Dict[str, Tuple[int, int]] = {}  # name -> (occurrences, note_count)
+    for note_id, data in notes.items():
+        category = category_index.get(note_id, "UNCATEGORIZED")
+        count = int(data.get("count", 0)) if isinstance(data, dict) else 0
+        prev_occ, prev_types = by_category.get(category, (0, 0))
+        by_category[category] = (prev_occ + count, prev_types + 1)
+
+    if not by_category:
+        return ""
+    # Render in the configured order, then append any unseen categories.
+    seen_in_order = [c for c in category_order if c in by_category]
+    for category in by_category:
+        if category not in seen_in_order:
+            seen_in_order.append(category)
+
+    rows: List[str] = []
+    for category in seen_in_order:
+        occurrences, note_types = by_category[category]
+        anchor = f"cat-{html.escape(category.lower())}"
+        rows.append(
+            f"<tr>"
+            f'<td><a href="#{anchor}">{html.escape(_pretty_category(category))}</a></td>'
+            f"<td>{_format_count(occurrences)}</td>"
+            f"<td>{_format_count(note_types)}</td>"
+            f"</tr>"
+        )
+    return (
+        '<section id="categories">'
+        '<h2>Findings by category</h2>'
+        '<table class="data-table">'
+        "<thead><tr><th>Category</th><th>Occurrences</th>"
+        "<th>Note types fired</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
         "</section>"
     )
 

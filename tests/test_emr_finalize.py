@@ -102,6 +102,43 @@ class TestMergeResults(unittest.TestCase):
                 {"a.example": 500, "b.example": 0, "c.example": 300},
             )
 
+    def test_severity_counts_summed(self) -> None:
+        with tempfile.TemporaryDirectory() as results:
+            _write_part(
+                os.path.join(results, "part-00000"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 100,
+                            "field_counts": {},
+                            "unprocessed_counts": {},
+                            "severity_counts": {"bad": 5, "warn": 30, "clean": 65},
+                        },
+                    ),
+                ],
+            )
+            _write_part(
+                os.path.join(results, "part-00001"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 50,
+                            "field_counts": {},
+                            "unprocessed_counts": {},
+                            "severity_counts": {"warn": 10, "info": 20, "clean": 20},
+                        },
+                    ),
+                ],
+            )
+            merged = merge_results(results)
+            self.assertEqual(merged["total_responses"], 150)
+            self.assertEqual(
+                merged["severity_counts"],
+                {"bad": 5, "warn": 40, "info": 20, "clean": 85},
+            )
+
     def test_skips_malformed_lines(self) -> None:
         with tempfile.TemporaryDirectory() as results:
             with open(
