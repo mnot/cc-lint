@@ -33,7 +33,11 @@ def create_s3_client() -> Any:
         config=Config(
             read_timeout=120,
             connect_timeout=30,
-            retries={"max_attempts": 3, "mode": "standard"},
+            # Adaptive retry mode plus a higher attempt budget rides out
+            # transient S3 throttles on the common-crawl prefix without
+            # adding much latency on the happy path. Standard mode's 3
+            # attempts proved too tight in earlier passes.
+            retries={"max_attempts": 5, "mode": "adaptive"},
         ),
     )
 
