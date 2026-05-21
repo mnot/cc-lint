@@ -1,11 +1,12 @@
 import argparse
 import gzip
+import json
 import os
 import re
 import statistics
 import subprocess
 from pathlib import Path
-from typing import Iterable, List, NamedTuple
+from typing import Any, Dict, Iterable, List, NamedTuple
 
 _FINISHED_RE = re.compile(
     r"INFO: finished WARC (?P<warc_num>\d+): (?P<path>.+?) \| "
@@ -16,6 +17,10 @@ _FINISHED_RE = re.compile(
 _FAILED_RE = re.compile(
     r"ERROR: failed WARC (?P<warc_num>\d+): (?P<path>.+?) \| "
     r"exit_code=(?P<exit_code>[^ ]+)(?: signal=(?P<signal>\d+))?"
+)
+_TIMEOUT_RE = re.compile(
+    r"ERROR: timeout WARC (?P<warc_num>\d+): (?P<path>.+?) after "
+    r"(?P<timeout_s>\d+)s; terminating child"
 )
 _INIT_RE = re.compile(r"mapper_init finished successfully in (?P<ms>\d+)ms")
 _JITTER_RE = re.compile(r"jitter sleep (?P<seconds>[0-9.]+)s")
@@ -33,6 +38,12 @@ class WarcFailure(NamedTuple):
     path: str
     exit_code: str
     signal: str
+    container: str
+
+
+class WarcTimeout(NamedTuple):
+    path: str
+    timeout_s: int
     container: str
 
 
@@ -72,22 +83,34 @@ def main() -> None:
         default=10,
         help="Number of slow WARCs/chunks to show",
     )
+    parser.add_argument(
+        "--json",
+        dest="json_out",
+        default=None,
+        help="Optional path to also dump the parsed summary as JSON",
+    )
     args = parser.parse_args()
 
     log_dir = Path(args.log_dir)
     if args.cluster_id:
         log_dir = _download_cluster_logs(args.cluster_id, log_dir, args.region)
 
-    warcs, failures, mappers = summarize_logs(log_dir)
-    _print_summary(warcs, failures, mappers, args.top)
+    warcs, failures, timeouts, mappers = summarize_logs(log_dir)
+    _print_summary(warcs, failures, timeouts, mappers, args.top)
+    if args.json_out:
+        _write_json_summary(args.json_out, warcs, failures, timeouts, mappers)
+        print(f"Wrote JSON summary to {args.json_out}")
 
 
 def summarize_logs(
     log_dir: Path,
-) -> tuple[List[WarcTiming], List[WarcFailure], List[MapperTiming]]:
+) -> tuple[
+    List[WarcTiming], List[WarcFailure], List[WarcTimeout], List[MapperTiming]
+]:
     stderr_paths = sorted(log_dir.rglob("stderr.gz"))
     warcs: List[WarcTiming] = []
     failures: List[WarcFailure] = []
+    timeouts: List[WarcTimeout] = []
     mappers: List[MapperTiming] = []
 
     for stderr_path in stderr_paths:
@@ -126,6 +149,16 @@ def summarize_logs(
                     )
                 )
 
+            timeout_match = _TIMEOUT_RE.search(line)
+            if timeout_match:
+                timeouts.append(
+                    WarcTimeout(
+                        path=timeout_match.group("path"),
+                        timeout_s=int(timeout_match.group("timeout_s")),
+                        container=stderr_path.parent.name,
+                    )
+                )
+
         if mapper_warcs:
             mappers.append(
                 MapperTiming(
@@ -140,7 +173,7 @@ def summarize_logs(
                 )
             )
 
-    return warcs, failures, mappers
+    return warcs, failures, timeouts, mappers
 
 
 def _download_cluster_logs(cluster_id: str, base_log_dir: Path, region: str) -> Path:
@@ -202,9 +235,10 @@ def _read_gzip_lines(path: Path) -> Iterable[str]:
         yield from gzip_file
 
 
-def _print_summary(
+def _print_summary(  # pylint: disable=too-many-positional-arguments
     warcs: List[WarcTiming],
     failures: List[WarcFailure],
+    timeouts: List[WarcTimeout],
     mappers: List[MapperTiming],
     top_count: int,
 ) -> None:
@@ -216,6 +250,7 @@ def _print_summary(
     print(f"Mapper chunks: {len(mappers):,}")
     print(f"WARCs completed: {len(warcs):,}")
     print(f"WARCs failed: {len(failures):,}")
+    print(f"WARCs timed out: {len(timeouts):,}")
     print(f"Records seen: {sum(timing.records for timing in warcs):,}")
     print()
 
@@ -231,6 +266,20 @@ def _print_summary(
                 f"{failure.signal or '-'} | "
                 f"`{failure.container}` | "
                 f"`{failure.path}` |"
+            )
+        print()
+
+    if timeouts:
+        print("## Timed-out WARCs")
+        print()
+        print("| Timeout (s) | Container | Path |")
+        print("| --- | --- | --- |")
+        for timeout in timeouts:
+            print(
+                "| "
+                f"{timeout.timeout_s} | "
+                f"`{timeout.container}` | "
+                f"`{timeout.path}` |"
             )
         print()
 
@@ -303,6 +352,52 @@ def _seconds(milliseconds: float) -> str:
 
 def _pct(part: int, whole: int) -> float:
     return part / whole * 100 if whole else 0.0
+
+
+def _percentiles(values: List[int]) -> Dict[str, int]:
+    if not values:
+        return {"sum": 0, "mean": 0, "median": 0, "p90": 0, "p99": 0, "max": 0}
+    return {
+        "sum": sum(values),
+        "mean": int(statistics.mean(values)),
+        "median": int(statistics.median(values)),
+        "p90": _percentile(values, 90),
+        "p99": _percentile(values, 99),
+        "max": max(values),
+    }
+
+
+def _write_json_summary(  # pylint: disable=too-many-positional-arguments
+    path: str,
+    warcs: List[WarcTiming],
+    failures: List[WarcFailure],
+    timeouts: List[WarcTimeout],
+    mappers: List[MapperTiming],
+) -> None:
+    """Persist the parsed summary as JSON for downstream tooling."""
+    payload: Dict[str, Any] = {
+        "totals": {
+            "mappers": len(mappers),
+            "warcs_completed": len(warcs),
+            "warcs_failed": len(failures),
+            "warcs_timed_out": len(timeouts),
+            "records_seen": sum(timing.records for timing in warcs),
+        },
+        "warc_ms": {
+            "total": _percentiles([t.total_ms for t in warcs]),
+            "process": _percentiles([t.process_ms for t in warcs]),
+            "iterator_download": _percentiles([t.iterator_ms for t in warcs]),
+        },
+        "mapper_ms": {
+            "elapsed": _percentiles([m.elapsed_ms for m in mappers]),
+            "jitter": _percentiles([m.jitter_ms for m in mappers]),
+            "init": _percentiles([m.init_ms for m in mappers]),
+        },
+        "failures": [failure._asdict() for failure in failures],
+        "timeouts": [timeout._asdict() for timeout in timeouts],
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
 
 
 if __name__ == "__main__":
