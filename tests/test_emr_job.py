@@ -87,6 +87,59 @@ class TestMergeStatsDict(unittest.TestCase):
         sites = {s.get("site") for s in note["samples"]}
         self.assertEqual(sites, {"a.example", "b.example"})
 
+    def test_merges_every_to_dict_field(self) -> None:
+        # Regression: merge_stats_dict has to cover every key that
+        # StatsCollector.to_dict() emits. Dropping any field silently
+        # discards data when the EMR mapper folds per-WARC worker output
+        # into its running stats. Verify sites_hll, severity_counts, and
+        # csp_max_by_site all survive the merge.
+        first_hll = make_registers(HLL_P_GLOBAL)
+        second_hll = make_registers(HLL_P_GLOBAL)
+        hll_add(first_hll, HLL_P_GLOBAL, "a.example")
+        hll_add(second_hll, HLL_P_GLOBAL, "b.example")
+
+        target: Dict[str, Any] = {}
+        merge_stats_dict(
+            target,
+            {
+                "total_responses": 50,
+                "notes": {},
+                "field_counts": {"date": 50},
+                "unprocessed_counts": {},
+                "sites_hll": first_hll,
+                "csp_max_by_site": {"a.example": 100},
+                "severity_counts": {"warn": 30, "clean": 20},
+            },
+        )
+        merge_stats_dict(
+            target,
+            {
+                "total_responses": 30,
+                "notes": {},
+                "field_counts": {"date": 30, "server": 25},
+                "unprocessed_counts": {},
+                "sites_hll": second_hll,
+                "csp_max_by_site": {"a.example": 500, "b.example": 200},
+                "severity_counts": {"warn": 10, "info": 15, "clean": 5},
+            },
+        )
+        self.assertEqual(target["total_responses"], 80)
+        self.assertEqual(target["field_counts"], {"date": 80, "server": 25})
+        # Severity counts sum.
+        self.assertEqual(
+            target["severity_counts"],
+            {"warn": 40, "info": 15, "clean": 25},
+        )
+        # CSP per-site max.
+        self.assertEqual(
+            target["csp_max_by_site"],
+            {"a.example": 500, "b.example": 200},
+        )
+        # HLL is unioned register-wise; the two disjoint adds give two
+        # distinct sites in the merged register state.
+        self.assertIn("sites_hll", target)
+        self.assertGreaterEqual(sum(1 for r in target["sites_hll"] if r > 0), 1)
+
 
 class TestMergeGlobalsHLLAndFlags(unittest.TestCase):
     def test_hll_union(self) -> None:

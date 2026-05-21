@@ -2,7 +2,7 @@ from typing import Any, Dict, Iterator, List, Optional, Set
 from collections import Counter
 
 from httplint.note import levels, Note
-from httplint import HttpResponseLinter
+from httplint.message import HttpResponseLinter
 from httplint.field.finder import UnknownHttpField
 
 from cc_lint.hll import (

@@ -82,7 +82,7 @@ class TestRenderer(unittest.TestCase):
         # Specific request-only and body-only notes should not appear in the
         # reachable bucket -- they should be classified into their own buckets.
         self.assertIn("MISSING_USER_AGENT", html)
-        self.assertIn("CHARSET_MISMATCH", html)
+        self.assertIn("BAD_GZIP", html)
 
     def test_truncation_flags_show(self) -> None:
         data = {

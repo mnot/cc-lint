@@ -1,7 +1,7 @@
 import datetime
 import unittest
 
-from httplint import HttpResponseLinter
+from httplint.message import HttpResponseLinter
 
 
 class TestLinterIntegration(unittest.TestCase):

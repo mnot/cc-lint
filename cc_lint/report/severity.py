@@ -121,13 +121,9 @@ REQUEST_ONLY_NOTES: Set[str] = {
 # until/unless we add a full-WARC mode. Listed explicitly so they don't bloat
 # the Unseen list.
 BODY_ONLY_NOTES: Set[str] = {
-    "CHARSET_MISMATCH",
-    "CHARSET_IMPLICIT_MISMATCH",
-    "CHARSET_UNDECODABLE",
     "BAD_GZIP",
     "BAD_BROTLI",
     "BAD_ZLIB",
-    "DECOMPRESSION_LIMIT",
     "CL_INCORRECT",
 }
 

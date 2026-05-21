@@ -3,7 +3,7 @@ import logging
 from typing import Any, Optional
 
 from dateutil.parser import parse
-from httplint import HttpResponseLinter
+from httplint.message import HttpResponseLinter
 
 logger = logging.getLogger(__name__)
 

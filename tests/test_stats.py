@@ -4,7 +4,7 @@
 import unittest
 from typing import Any, cast
 
-from httplint import HttpResponseLinter
+from httplint.message import HttpResponseLinter
 from httplint.note import Note, categories, levels
 
 from cc_lint.hll import hll_estimate

@@ -137,7 +137,13 @@ def merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
 
 
 def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
-    """Merge a serialized StatsCollector dict into ``target`` in place."""
+    """Merge a serialized StatsCollector dict into ``target`` in place.
+
+    Used by the EMR mapper to fold each WARC's worker-side StatsCollector
+    snapshot into the mapper's running running dict. Must cover every
+    field that ``StatsCollector.to_dict`` produces -- anything missed here
+    is silently dropped at mapper-aggregation time.
+    """
     target["total_responses"] = target.get("total_responses", 0) + int(
         source.get("total_responses", 0)
     )
@@ -145,12 +151,24 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_counts(target["field_counts"], source.get("field_counts", {}))
     target.setdefault("unprocessed_counts", {})
     _merge_counts(target["unprocessed_counts"], source.get("unprocessed_counts", {}))
+    target.setdefault("severity_counts", {})
+    _merge_counts(target["severity_counts"], source.get("severity_counts", {}))
     target.setdefault("notes", {})
     for note_id, note in source.get("notes", {}).items():
         target["notes"].setdefault(
             note_id, {"count": 0, "samples": [], "vars": {}}
         )
         merge_note(target["notes"][note_id], note)
+    src_hll = source.get("sites_hll")
+    if src_hll:
+        if "sites_hll" not in target:
+            target["sites_hll"] = list(src_hll)
+        else:
+            hll_merge(target["sites_hll"], src_hll)
+    src_csp = source.get("csp_max_by_site")
+    if src_csp:
+        target.setdefault("csp_max_by_site", {})
+        merge_csp_sizes(target["csp_max_by_site"], src_csp)
 
 
 GLOBALS_KEY = "globals"
