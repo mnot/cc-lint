@@ -249,9 +249,11 @@ def _render_var_block(
                 "Total times this header appeared on any analysed response.",
             ),
             (
-                "Fire rate",
-                "Note fires divided by header occurrences -- the share of "
-                "this header's appearances that triggered this note.",
+                "Fires per occurrence",
+                "Note fires divided by header occurrences. List-valued or "
+                "directive-valued headers (e.g. Clear-Site-Data, "
+                "Cache-Control) can exceed 100% because httplint fires the "
+                "note once per offending token, not once per header.",
             ),
         ]
     if largest_by_value:

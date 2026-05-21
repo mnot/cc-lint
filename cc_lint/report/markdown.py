@@ -127,7 +127,7 @@ def _render_var_table(
     is_field_name = var_name == "field_name"
     headers = ["Value", "Note fires"]
     if is_field_name:
-        headers += ["Header occurrences", "Fire rate"]
+        headers += ["Header occurrences", "Fires per occurrence"]
     if largest_by_value:
         headers.append("Largest seen")
 
