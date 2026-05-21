@@ -48,13 +48,7 @@ def _sample_li(sample: Dict[str, Any]) -> str:
 
 
 def count_total_notes(notes: Dict[str, Any]) -> int:
-    total = 0
-    for data in notes.values():
-        if isinstance(data, dict):
-            total += int(data.get("count", 0))
-        else:
-            total += int(data)
-    return total
+    return sum(int(data.get("count", 0)) for data in notes.values())
 
 
 # ---- top of report ---------------------------------------------------------
@@ -293,8 +287,8 @@ def _render_note_card(
     severity: str,
     field_counts: Dict[str, int],
 ) -> str:
-    count = note_data.get("count", 0) if isinstance(note_data, dict) else int(note_data)
-    samples = note_data.get("samples", []) if isinstance(note_data, dict) else []
+    count = int(note_data.get("count", 0))
+    samples = note_data.get("samples") or []
 
     sample_html = ""
     if samples:
@@ -304,9 +298,7 @@ def _render_note_card(
             "</ul>"
         )
 
-    var_html = ""
-    if isinstance(note_data, dict):
-        var_html = _render_variable_stats(note_data, field_counts)
+    var_html = _render_variable_stats(note_data, field_counts)
 
     open_attr = " open" if count > 0 else ""
     count_title = (
@@ -314,7 +306,7 @@ def _render_note_card(
         "occurrences for notes that fire per header or per directive."
     )
     sites_pill = ""
-    sites_hll = note_data.get("sites_hll") if isinstance(note_data, dict) else None
+    sites_hll = note_data.get("sites_hll")
     if sites_hll:
         site_est = hll_estimate(sites_hll)
         if site_est > 0:
@@ -344,9 +336,7 @@ def render_notes_section(
 ) -> str:
     sorted_notes = sorted(
         notes.items(),
-        key=lambda item: (
-            item[1].get("count", 0) if isinstance(item[1], dict) else int(item[1])
-        ),
+        key=lambda item: item[1].get("count", 0),
         reverse=True,
     )
     if not sorted_notes:

@@ -127,8 +127,6 @@ def _render_note_block(
     severity: str,
     field_counts: Dict[str, int],
 ) -> List[str]:
-    if not isinstance(note_data, dict):
-        return []
     count = int(note_data.get("count", 0))
 
     heading_bits = [f"### `{severity.upper()}` `{note_id}`"]
@@ -172,9 +170,7 @@ def _render_notes_section(
         return []
     sorted_notes = sorted(
         notes.items(),
-        key=lambda item: (
-            item[1].get("count", 0) if isinstance(item[1], dict) else int(item[1])
-        ),
+        key=lambda item: item[1].get("count", 0),
         reverse=True,
     )
     lines = ["## Notes", ""]
@@ -254,13 +250,7 @@ def _render_unseen(
 
 
 def _count_total_notes(notes: Dict[str, Any]) -> int:
-    total = 0
-    for data in notes.values():
-        if isinstance(data, dict):
-            total += int(data.get("count", 0))
-        else:
-            total += int(data)
-    return total
+    return sum(int(data.get("count", 0)) for data in notes.values())
 
 
 def render_markdown(data: Dict[str, Any]) -> str:

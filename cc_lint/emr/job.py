@@ -40,11 +40,11 @@ def _build_run_context(options: Any) -> Dict[str, Any]:
     """Snapshot the run-shaping flags so the report can show provenance."""
     return {
         "crawl_id": getattr(options, "crawl_id", "") or "",
-        "top_sites": int(getattr(options, "top_sites", 0) or 0),
-        "sample_top_sites": int(getattr(options, "sample_top_sites", 0) or 0),
-        "record_limit": int(getattr(options, "record_limit", 0) or 0),
-        "warc_limit": int(getattr(options, "limit", 0) or 0),
-        "warc_timeout_s": int(getattr(options, "warc_timeout", 0) or 0),
+        "top_sites": int(getattr(options, "top_sites", 0)),
+        "sample_top_sites": int(getattr(options, "sample_top_sites", 0)),
+        "record_limit": int(getattr(options, "record_limit", 0)),
+        "warc_limit": int(getattr(options, "limit", 0)),
+        "warc_timeout_s": int(getattr(options, "warc_timeout", 0)),
         "cc_lint_version": cc_lint.__version__,
     }
 

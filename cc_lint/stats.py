@@ -75,7 +75,7 @@ def get_note_value(note: Note, var_name: str) -> Optional[Any]:
         # Strip context from the error message to group effectively
         error_msg = str(note.vars["error"]).split("\n", maxsplit=1)[0]
         val = f"{note.vars['field_name']}: {error_msg}"
-    elif hasattr(note, "vars") and var_name in note.vars:
+    elif var_name in note.vars:
         val = note.vars[var_name]
     elif hasattr(note, var_name):
         val = getattr(note, var_name)
@@ -104,18 +104,13 @@ def create_sample(
     for key, val in vars(note).items():
         if key not in filtered_keys:
             note_vars[key] = str(val)
-    if hasattr(note, "vars"):
-        for key, val in note.vars.items():
-            if key not in filtered_keys:
-                note_vars[key] = str(val)
+    for key, val in note.vars.items():
+        if key not in filtered_keys:
+            note_vars[key] = str(val)
 
     if var_name and val_str:
         # Capture header values for context
-        if (
-            hasattr(linter, "headers")
-            and hasattr(linter.headers, "text")
-            and var_name == "field_name"
-        ):
+        if var_name == "field_name":
             target_field_name = val_str.lower()
             values = []
             for h_name, h_val in linter.headers.text:
@@ -258,20 +253,16 @@ class StatsCollector:
             self.note_data[note_id]["samples"].append(sample)
 
     def _process_headers(self, linter: HttpResponseLinter) -> None:
-        # Count fields
-        if hasattr(linter, "headers") and hasattr(linter.headers, "text"):
-            for name, _value in linter.headers.text:
-                # linter headers are often bytes, decode if needed
-                name_str = str(name)
-                # Normalize case to lower for case-insensitive stats as requested
-                self.field_counts[name_str.lower()] += 1
+        # Count fields (case-insensitive); decode names if they are bytes.
+        for name, _value in linter.headers.text:
+            self.field_counts[str(name).lower()] += 1
 
-        # Count unprocessed headers
-        if hasattr(linter, "headers") and hasattr(linter.headers, "handlers"):
-            for name, handler in linter.headers.handlers.items():
-                if isinstance(handler, UnknownHttpField):
-                    if not name.startswith("x-crawler-"):
-                        self.unprocessed_counts[name] += 1
+        # Count unprocessed headers, ignoring crawler-injected ones.
+        for name, handler in linter.headers.handlers.items():
+            if isinstance(handler, UnknownHttpField) and not name.startswith(
+                "x-crawler-"
+            ):
+                self.unprocessed_counts[name] += 1
 
     def to_dict(self) -> Dict[str, Any]:
         return {

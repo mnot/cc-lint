@@ -34,7 +34,7 @@ def _build_html(data: Dict[str, Any]) -> str:
     possible_ids = possible_note_ids(severity_index)
 
     total_responses = int(data.get("total_responses", 0))
-    notes = data.get("notes", data.get("note_counts", {})) or {}
+    notes = data.get("notes") or {}
     field_counts: Dict[str, int] = data.get("field_counts", {}) or {}
     unprocessed_counts: Dict[str, int] = data.get("unprocessed_counts", {}) or {}
 
