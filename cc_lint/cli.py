@@ -1,7 +1,7 @@
 import gzip
 import json
 import logging
-from typing import Optional, Set
+from typing import List, Optional, Set
 
 import click
 
@@ -18,6 +18,50 @@ logger = logging.getLogger(__name__)
 @click.group()
 def cli() -> None:
     pass
+
+
+def _load_paths(paths_file: str) -> Optional[List[str]]:
+    """Read WARC paths (plain or gzipped) into a list. Returns None on missing file."""
+    open_func = gzip.open if paths_file.endswith(".gz") else open
+    try:
+        with open_func(paths_file, "rt") as path_file:
+            return [line.strip() for line in path_file]
+    except FileNotFoundError:
+        logger.error("Paths file %s not found.", paths_file)
+        return None
+
+
+def _load_top_sites_set(
+    top_sites: Optional[int], cache_dir: Optional[str]
+) -> Optional[Set[str]]:
+    """Load the Tranco top-N hostname set, downloading on first use."""
+    if not top_sites:
+        return None
+    ts_cache = cache_dir if cache_dir else "tranco_cache"
+    tranco_path = get_top_sites_path(ts_cache)
+    return load_top_sites(tranco_path, top_sites)
+
+
+def _run_lint_loop(
+    warc_paths: List[str],
+    limit: int,
+    record_limit: int,
+    cache_dir: Optional[str],
+    top_sites_set: Optional[Set[str]],
+    stats: StatsCollector,
+) -> None:
+    """Drive the per-WARC linting loop, swallowing KeyboardInterrupt cleanly."""
+    count = 0
+    try:
+        for warc_path in warc_paths:
+            if count >= limit:
+                break
+            _process_single_warc(
+                warc_path, record_limit, cache_dir, top_sites_set, stats
+            )
+            count += 1
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user. Saving partial results...")
 
 
 @cli.command(name="lint")
@@ -48,46 +92,19 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
     top_sites: Optional[int],
 ) -> None:
     """Run httplint on Common Crawl WARC files."""
-    stats = StatsCollector()
-
-    tranco_path = None
-    if top_sites:
-        ts_cache = cache_dir if cache_dir else "tranco_cache"
-        tranco_path = get_top_sites_path(ts_cache)
-
     logger.info("Reading paths from %s", paths_file)
-    open_func = gzip.open if paths_file.endswith(".gz") else open
-
-    warc_paths = []
-    try:
-        with open_func(paths_file, "rt") as path_file:
-            for line in path_file:
-                warc_paths.append(line.strip())
-    except FileNotFoundError:
-        logger.error("Paths file %s not found.", paths_file)
+    warc_paths = _load_paths(paths_file)
+    if warc_paths is None:
         return
-
     logger.info("Found %s WARC paths. Processing first %s.", len(warc_paths), limit)
 
-    top_sites_set = None
-    if top_sites and tranco_path:
-        top_sites_set = load_top_sites(tranco_path, top_sites)
+    top_sites_set = _load_top_sites_set(top_sites, cache_dir)
 
-    count = 0
-    try:
-        for warc_path in warc_paths:
-            if count >= limit:
-                break
-            _process_single_warc(
-                warc_path, record_limit, cache_dir, top_sites_set, stats
-            )
-            count += 1
-    except KeyboardInterrupt:
-        logger.warning("Interrupted by user. Saving partial results...")
+    stats = StatsCollector()
+    _run_lint_loop(warc_paths, limit, record_limit, cache_dir, top_sites_set, stats)
 
     with open(output, "w", encoding="utf-8") as out_file:
         json.dump(stats.to_dict(), out_file, indent=2)
-
     logger.info("Done. Stats written to %s", output)
 
 
