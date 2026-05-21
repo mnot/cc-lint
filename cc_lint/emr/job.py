@@ -143,6 +143,21 @@ def merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
             target["sites_hll"] = list(src_hll)
         else:
             hll_merge(target["sites_hll"], src_hll)
+    src_maxes = source.get("numeric_maxes")
+    if src_maxes:
+        _merge_numeric_maxes(target.setdefault("numeric_maxes", {}), src_maxes)
+
+
+def _merge_numeric_maxes(
+    target: Dict[str, Dict[str, int]], source: Dict[str, Dict[str, int]]
+) -> None:
+    """Per-(var_name, key) take the max. Used for FIELD_TOO_LARGE field_size."""
+    for var_name, per_key in source.items():
+        target_per_key = target.setdefault(var_name, {})
+        for key, value in per_key.items():
+            prev = target_per_key.get(key, 0)
+            if int(value) > prev:
+                target_per_key[key] = int(value)
 
 
 def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:

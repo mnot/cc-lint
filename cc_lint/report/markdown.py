@@ -11,6 +11,7 @@ collapsibles or the per-(var, val) sample lists.
 from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.hll import hll_estimate
+from cc_lint.histograms import bucket_order
 from cc_lint.report.severity import (
     build_category_index,
     build_severity_index,
@@ -22,6 +23,16 @@ from cc_lint.report.severity import (
 from cc_lint.report.styles import METHODOLOGY_NOTE
 
 _NOTE_SUMMARIES = build_summary_index()
+
+_VAR_LABELS_MD = {
+    "directive_conflicts": "Directive → conflicts",
+    "field_name_key": "Field name → key",
+    "freshness_left_bucket": "Freshness remaining",
+    "duration_bucket": "Duration",
+    "cookie_value_size_bucket": "Cookie value size",
+    "field_size_bucket": "Field size",
+    "field_error": "Field → parse error",
+}
 
 
 def _fmt_count(value: int) -> str:
@@ -99,18 +110,37 @@ def _render_summary_table(
     return lines
 
 
+def _fmt_byte_size_md(byte_size: int) -> str:
+    if byte_size < 1024:
+        return f"{byte_size} B"
+    if byte_size < 1024 * 1024:
+        return f"{byte_size / 1024:.1f} KB"
+    return f"{byte_size / (1024 * 1024):.1f} MB"
+
+
 def _render_var_table(
     var_name: str,
     counts: Dict[str, int],
     field_counts: Dict[str, int],
+    largest_by_value: Optional[Dict[str, int]] = None,
 ) -> List[str]:
     is_field_name = var_name == "field_name"
-    headers = ["Value", "Count"]
+    headers = ["Value", "Note fires"]
     if is_field_name:
-        headers += ["Total", "%"]
+        headers += ["Header occurrences", "Fire rate"]
+    if largest_by_value:
+        headers.append("Largest seen")
 
-    sorted_vals = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:25]
-    lines = [f"#### {var_name}", ""]
+    bucket_seq = bucket_order(var_name)
+    if bucket_seq is not None:
+        order_index = {label: idx for idx, label in enumerate(bucket_seq)}
+        sorted_vals = sorted(
+            counts.items(), key=lambda kv: order_index.get(kv[0], len(bucket_seq))
+        )[:25]
+    else:
+        sorted_vals = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:25]
+    heading = _VAR_LABELS_MD.get(var_name, var_name)
+    lines = [f"#### {heading}", ""]
     lines.append("| " + " | ".join(headers) + " |")
     lines.append("| " + " | ".join("---" for _ in headers) + " |")
     for val, val_count in sorted_vals:
@@ -122,6 +152,9 @@ def _render_var_table(
                 cells += [_fmt_count(total), f"{pct:.2f}%"]
             else:
                 cells += [_fmt_count(total), "—"]
+        if largest_by_value:
+            largest = largest_by_value.get(val)
+            cells.append(_fmt_byte_size_md(largest) if largest else "—")
         lines.append("| " + " | ".join(cells) + " |")
     if len(counts) > 25:
         lines.append(f"_… {len(counts) - 25} more values not shown …_")
@@ -167,6 +200,8 @@ def _render_note_block(
         lines.append("")
 
     truncated_vars = note_data.get("truncated_vars") or {}
+    numeric_maxes: Dict[str, Dict[str, int]] = note_data.get("numeric_maxes") or {}
+    field_size_max = numeric_maxes.get("field_size") or {}
     var_stats = note_data.get("vars") or {}
     for var_name, counts in var_stats.items():
         if not counts:
@@ -175,7 +210,8 @@ def _render_note_block(
             lines.append(
                 f"_{var_name}: long tail elided during shuffle; head only._"
             )
-        lines.extend(_render_var_table(var_name, counts, field_counts))
+        largest = field_size_max if var_name == "field_name" else None
+        lines.extend(_render_var_table(var_name, counts, field_counts, largest))
     return lines
 
 
@@ -291,16 +327,22 @@ def _render_notes_section(  # pylint: disable=too-many-positional-arguments
             ordered.append(category)
     lines = ["## Notes", ""]
     for category in ordered:
-        entries = sorted(
-            by_category[category],
-            key=lambda triple: (
-                -_SEVERITY_ORDER_MD.get(triple[2], 0),
-                -int(triple[1].get("count", 0))
-                if isinstance(triple[1], dict)
-                else 0,
-                triple[0],
-            ),
-        )
+        def _key(
+            triple: Tuple[str, Dict[str, Any], str]
+        ) -> Tuple[int, int, int, str]:
+            note_id, data, sev = triple
+            if not isinstance(data, dict):
+                return (0, 0, 0, note_id)
+            sites_hll = data.get("sites_hll")
+            sites = (
+                hll_estimate(sites_hll)
+                if isinstance(sites_hll, list) and sites_hll
+                else 0
+            )
+            count = int(data.get("count", 0))
+            return (-_SEVERITY_ORDER_MD.get(sev, 0), -sites, -count, note_id)
+
+        entries = sorted(by_category[category], key=_key)
         total_occ = sum(
             int(d.get("count", 0)) if isinstance(d, dict) else 0
             for _, d, _s in entries

@@ -11,6 +11,7 @@ import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.hll import hll_estimate
+from cc_lint.histograms import bucket_order
 from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
 
@@ -18,6 +19,20 @@ from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
 REDBOT_BASE = "https://redbot.org/check?uri="
 
 _NOTE_SUMMARIES = build_summary_index()
+
+_VAR_LABELS = {
+    "directive_conflicts": "Directive → conflicts",
+    "field_name_key": "Field name → key",
+    "freshness_left_bucket": "Freshness remaining",
+    "duration_bucket": "Duration",
+    "cookie_value_size_bucket": "Cookie value size",
+    "field_size_bucket": "Field size",
+    "field_error": "Field → parse error",
+}
+
+
+def _var_heading(var_name: str) -> str:
+    return _VAR_LABELS.get(var_name, var_name)
 
 
 # ---- formatting helpers ----------------------------------------------------
@@ -199,18 +214,53 @@ def _render_field_error_block(counts: Dict[str, int]) -> str:
     )
 
 
+def _format_byte_size(byte_size: int) -> str:
+    if byte_size < 1024:
+        return f"{byte_size} B"
+    if byte_size < 1024 * 1024:
+        return f"{byte_size / 1024:.1f} KB"
+    return f"{byte_size / (1024 * 1024):.1f} MB"
+
+
 def _render_var_block(
     var_name: str,
     counts: Dict[str, int],
     field_counts: Dict[str, int],
+    largest_by_value: Optional[Dict[str, int]] = None,
 ) -> str:
     is_field_name = var_name == "field_name"
-    sorted_vals = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    bucket_seq = bucket_order(var_name)
+    if bucket_seq is not None:
+        order_index = {label: idx for idx, label in enumerate(bucket_seq)}
+        sorted_vals = sorted(
+            counts.items(), key=lambda kv: order_index.get(kv[0], len(bucket_seq))
+        )
+    else:
+        sorted_vals = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
 
-    head_cells = ["Value", "Count"]
+    head_cells: List[Tuple[str, str]] = [
+        ("Value", "Value of the variable."),
+        ("Note fires", "Times this note fired with this value."),
+    ]
     if is_field_name:
-        head_cells += ["Total occurrences", "% of occurrences"]
-    header = "".join(f"<th>{c}</th>" for c in head_cells)
+        head_cells += [
+            (
+                "Header occurrences",
+                "Total times this header appeared on any analysed response.",
+            ),
+            (
+                "Fire rate",
+                "Note fires divided by header occurrences -- the share of "
+                "this header's appearances that triggered this note.",
+            ),
+        ]
+    if largest_by_value:
+        head_cells.append(
+            ("Largest seen", "Largest value observed for this entry across the crawl.")
+        )
+    header = "".join(
+        f'<th title="{html.escape(t)}">{html.escape(c)}</th>' for c, t in head_cells
+    )
 
     rows: List[str] = []
     for val, val_count in sorted_vals[:25]:
@@ -222,6 +272,9 @@ def _render_var_block(
                 cells += [_format_count(total), f"{pct:.2f}%"]
             else:
                 cells += [_format_count(total), "—"]
+        if largest_by_value:
+            largest = largest_by_value.get(val)
+            cells.append(_format_byte_size(largest) if largest else "—")
         cells_html = "".join(f"<td>{c}</td>" for c in cells)
         rows.append(f"<tr>{cells_html}</tr>")
 
@@ -232,7 +285,7 @@ def _render_var_block(
         )
 
     return (
-        f'<h4>{html.escape(var_name)}</h4>'
+        f'<h4>{html.escape(_var_heading(var_name))}</h4>'
         f'<table class="var-table">'
         f"<thead><tr>{header}</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
@@ -247,6 +300,9 @@ def _render_variable_stats(
     if not var_stats:
         return ""
     truncated_vars = note_data.get("truncated_vars") or {}
+    numeric_maxes: Dict[str, Dict[str, int]] = note_data.get("numeric_maxes") or {}
+    # Currently the only configured max is field_size, keyed by field_name.
+    field_size_max = numeric_maxes.get("field_size") or {}
     blocks: List[str] = []
     for var_name, counts in var_stats.items():
         if truncated_vars.get(var_name):
@@ -256,10 +312,13 @@ def _render_variable_stats(
                 "during shuffle; only the retained head is shown.</p>"
             )
         if var_name == "field_error":
-            blocks.append("<h4>field_error</h4>")
+            blocks.append(f"<h4>{html.escape(_var_heading(var_name))}</h4>")
             blocks.append(_render_field_error_block(counts))
         else:
-            blocks.append(_render_var_block(var_name, counts, field_counts))
+            largest_by_value = field_size_max if var_name == "field_name" else None
+            blocks.append(
+                _render_var_block(var_name, counts, field_counts, largest_by_value)
+            )
     return f'<div class="var-stats">{"".join(blocks)}</div>'
 
 
@@ -331,12 +390,20 @@ _SEVERITY_ORDER = {"bad": 4, "warn": 3, "info": 2, "good": 1}
 
 def _note_sort_key(
     item: Tuple[str, Dict[str, Any]]
-) -> Tuple[int, int, str]:
-    """Sort within a category: by severity desc, then occurrence count desc."""
+) -> Tuple[int, int, int, str]:
+    """Sort within a category: severity desc, then site cardinality desc,
+    then occurrence count desc, then id asc.
+    Notes seen on more sites surface above notes with many occurrences from a
+    handful of noisy sites.
+    """
     note_id, data = item
-    severity = data.get("_severity", "warn") if isinstance(data, dict) else "warn"
-    count = int(data.get("count", 0)) if isinstance(data, dict) else 0
-    return (-_SEVERITY_ORDER.get(severity, 0), -count, note_id)
+    if not isinstance(data, dict):
+        return (0, 0, 0, note_id)
+    severity = data.get("_severity", "warn")
+    count = int(data.get("count", 0))
+    sites_hll = data.get("sites_hll")
+    sites = hll_estimate(sites_hll) if isinstance(sites_hll, list) and sites_hll else 0
+    return (-_SEVERITY_ORDER.get(severity, 0), -sites, -count, note_id)
 
 
 def render_notes_section(  # pylint: disable=too-many-positional-arguments

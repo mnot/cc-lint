@@ -11,6 +11,7 @@ from cc_lint.hll import (
     hll_add,
     make_registers,
 )
+from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
 
@@ -59,12 +60,18 @@ VARS_TO_TRACK = {
     "BAD_DATE_SYNTAX": ["field_name"],
     "SINGLE_HEADER_REPEAT": ["field_name"],
     "CC_DUP": ["directive"],
-    "STRUCTURED_FIELD_PARSE_ERROR": ["field_error"],
+    "STRUCTURED_FIELD_PARSE_ERROR": ["field_error", "field_name"],
     "BAD_CC_SYNTAX": ["bad_directive"],
     "UNKNOWN_VALUE": ["field_name", "value"],
     "CROSS_ORIGIN_RESOURCE_POLICY_BAD_VALUE": ["value"],
     "BAD_SYNTAX_DETAILED": ["field_name"],
     "CC_WRONG_MESSAGE": ["other_message"],
+    "CC_CONFLICTING": ["directive_conflicts"],
+    "DUPLICATE_KEY": ["field_name", "field_name_key"],
+    "FRESHNESS_FRESH": ["freshness_left_bucket"],
+    "SET_COOKIE_LIFETIME_TOO_LONG": ["duration_bucket"],
+    "SET_COOKIE_VALUE_TOO_LARGE": ["cookie_value_size_bucket"],
+    "FIELD_TOO_LARGE": ["field_name", "field_size_bucket"],
 }
 
 SAMPLES_TO_COLLECT = {
@@ -97,6 +104,16 @@ SAMPLES_TO_COLLECT = {
 }
 
 
+def _bucket_var(note: Note, source_var: str, bucketer: Any) -> Optional[str]:
+    raw = note.vars.get(source_var)
+    if raw is None:
+        return None
+    try:
+        return str(bucketer(float(str(raw))))
+    except (TypeError, ValueError):
+        return None
+
+
 def get_note_value(note: Note, var_name: str) -> Optional[Any]:
     val: Optional[Any] = None
     if (
@@ -107,6 +124,27 @@ def get_note_value(note: Note, var_name: str) -> Optional[Any]:
         # Strip context from the error message to group effectively
         error_msg = str(note.vars["error"]).split("\n", maxsplit=1)[0]
         val = f"{note.vars['field_name']}: {error_msg}"
+    elif var_name == "directive_conflicts":
+        directive = note.vars.get("directive")
+        conflicts = note.vars.get("conflicts")
+        if directive is not None and conflicts is not None:
+            # httplint renders the conflicts list as a markdown bullet block;
+            # collapse newlines so the value becomes a single sortable string.
+            conflicts_str = " ".join(str(conflicts).split())
+            val = f"{directive} → {conflicts_str}"
+    elif var_name == "field_name_key":
+        field = note.vars.get("field_name")
+        key = note.vars.get("key")
+        if field is not None and key is not None:
+            val = f"{field}: {key}"
+    elif var_name == "freshness_left_bucket":
+        val = _bucket_var(note, "freshness_left", duration_bucket)
+    elif var_name == "duration_bucket":
+        val = _bucket_var(note, "duration", duration_bucket)
+    elif var_name == "cookie_value_size_bucket":
+        val = _bucket_var(note, "set_cookie_value_length", byte_bucket)
+    elif var_name == "field_size_bucket":
+        val = _bucket_var(note, "field_size", byte_bucket)
     elif var_name in note.vars:
         val = note.vars[var_name]
     elif hasattr(note, var_name):
@@ -255,8 +293,35 @@ class StatsCollector:
                 hll_add(sites_hll, HLL_P_PER_NOTE, site)
 
         self._track_vars(note, note_id)
+        self._track_numeric_maxes(note, note_id)
         self._collect_samples(note, linter, note_id)
         self._collect_note_sample(note, linter, note_id)
+
+    # Per-note maxima keyed by another var. Currently only FIELD_TOO_LARGE
+    # uses this, to surface the largest field_size seen per field_name.
+    # Mapper and reducer merge these dicts with max() instead of sum().
+    _NUMERIC_MAXES = {
+        "FIELD_TOO_LARGE": [("field_name", "field_size")],
+    }
+
+    def _track_numeric_maxes(self, note: Note, note_id: str) -> None:
+        spec = self._NUMERIC_MAXES.get(note_id)
+        if not spec:
+            return
+        for key_var, value_var in spec:
+            key = note.vars.get(key_var)
+            raw = note.vars.get(value_var)
+            if key is None or raw is None:
+                continue
+            try:
+                size = int(float(str(raw)))
+            except (TypeError, ValueError):
+                continue
+            maxes = self.note_data[note_id].setdefault("numeric_maxes", {})
+            per_var = maxes.setdefault(value_var, {})
+            prev = per_var.get(str(key), 0)
+            if size > prev:
+                per_var[str(key)] = size
 
     def _track_vars(self, note: Note, note_id: str) -> None:
         # Track variable statistics
