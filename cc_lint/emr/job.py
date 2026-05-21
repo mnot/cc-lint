@@ -10,6 +10,7 @@ mapper outputs into a single summary record.
 
 # pylint: disable=abstract-method,attribute-defined-outside-init,broad-exception-caught
 
+import random
 import sys
 import tempfile
 import time
@@ -397,6 +398,11 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                     )
             self.run_context = _build_run_context(self.options)
             self.warcs_seen = 0
+            # Random per-mapper sleep applied before the first S3 download
+            # to break up the simultaneous mapper-startup burst. cc-feeds
+            # parity (cc_lint is smaller-per-download but the burst pattern
+            # is the same).
+            self._s3_jitter = random.uniform(0, 30)
             init_ms = int((time.perf_counter() - init_start) * 1000)
             self.increment_counter("timing", "mapper_init_ms", init_ms)
             sys.stderr.write(
@@ -423,6 +429,15 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                 f"INFO: starting WARC {self.warcs_seen}: {raw_path}\n"
             )
             sys.stderr.flush()
+            if self.warcs_seen == 1 and self._s3_jitter > 0:
+                sys.stderr.write(
+                    f"INFO: jitter sleep {self._s3_jitter:.1f}s\n"
+                )
+                sys.stderr.flush()
+                time.sleep(self._s3_jitter)
+                self.increment_counter(
+                    "timing", "jitter_ms", int(self._s3_jitter * 1000)
+                )
             self.set_status(f"Downloading WARC {self.warcs_seen}: {raw_path}")
             result = self._process_warc_in_child(raw_path)
             if result is None:
