@@ -9,6 +9,29 @@ follow-up commit, **L**ow = nice to have. Effort: **S**mall = single
 file edit, **M**edium = multi-file refactor, **L**arge = cross-cutting
 change.
 
+## Workload character
+
+**cc-lint reads WAT, not WARC.** Both `cc_lint.crawling._warc_to_wat`
+and `cc_lint.emr.warc_source.warc_path_to_wat` rewrite the input
+path: `/warc/` → `/wat/` and `.warc.gz` → `.warc.wat.gz`. WAT files
+carry response metadata only (HTTP headers, no body), so they are
+roughly an order of magnitude smaller than the WARC equivalents
+(~100-300 MB compressed per WAT vs ~1 GB per WARC).
+
+This inverts the cc-feeds assumption that the workload is I/O-bound:
+
+- **Download dominates cc-feeds wall time** because each WARC is
+  ~1 GB and the mapper streams it before httplint can act on the
+  response body.
+- **httplint CPU dominates cc-lint wall time** because each WAT is
+  small (fast download) but each metadata record decodes JSON,
+  reconstructs HTTP headers, and runs the full httplint analysis. A
+  typical WAT carries ~50-80k metadata records; processing all of
+  them at modest per-record cost is the long pole.
+
+Several findings below were written with cc-feeds' I/O profile in
+mind and have been re-scored or dropped after this re-examination.
+
 ## Configuration baseline
 
 | Knob | Value | Notes |
@@ -20,199 +43,171 @@ change.
 | Reduce memory | 4 GB / 3 GB Xmx | bounded by per-key trim caps |
 | Reduces | 20 | shards across ~100-200 active note keys after sharding |
 | Reduce slowstart | 0.9 | reducers begin when 90% of maps done |
-| Map tasks | 1600 | ~50 WARCs per mapper for the full crawl |
+| Map tasks | 1600 | ~50 WATs per mapper for the full crawl |
 | Map / Reduce speculation | enabled (full), disabled (test) | see E5 |
 | Requester pays | enabled for s3a | required for the commoncrawl bucket |
 | Wheel bootstrap | dnf python3.12 + S3 wheel sync + offline pip | one-time per cluster |
-| Per-WARC wall clock | 15 min (`--warc-timeout`) | added in Phase 2b |
-| Child process | forked, pickled result | crash-isolated per WARC |
+| Per-WAT wall clock | 15 min (`--warc-timeout`) | added in Phase 2b |
+| Child process | forked, pickled result | crash-isolated per WAT |
 | Trim caps | 2000 / 5000 per dict | added in Phase 2b |
 
 ## E. Efficiency findings
 
-**E1 (M / S). No S3 jitter on initial WARC download.** cc-feeds spaces
+**E0 (H / S). Instance fleet is wrong for a CPU-bound workload.** The
+fleet inherits cc-feeds' choices: m5, m5d, r5, r5d, c5. cc-feeds has
+real reasons for the d/r mix — local NVMe (m5d/r5d) helps WARC
+streaming, and r5 memory matters for full-WARC parsing. cc-lint
+needs neither: WAT records are small, all state is in-process Python
+dicts, and per-mapper memory caps at 2 GB. The compute-optimised c5
+family (4 vCPU, 8 GB RAM, ~$0.085/hr on-demand) is roughly half the
+price of m5.xlarge (~$0.192) and matches cc-lint's actual resource
+shape. EMR's instance-fleet allocator picks the cheapest available
+instance by default, so c5.xlarge will usually win — but the
+heterogeneous fleet still allocates m5/r5 instances when c5 capacity
+is short, pushing the average cost up. *Fix*: tighten the cc-lint
+full-run fleet to c5/c5n only, or set explicit weighted capacity to
+prefer c5 strongly. Estimated savings 30-50% of compute cost.
+
+**E1 (L / S). S3 jitter is less urgent for WAT.** cc-feeds spaces
 mapper S3 reads with a 0-30s random jitter before the first WARC
-download to avoid 30 nodes × ~4 concurrent S3 GETs slamming the same
-partition. cc-lint inherits the same fleet but skipped this. With 30
-mappers each starting 50-WARC loops the simultaneous burst can hit
-S3's per-prefix request budget (3500 GET/sec on a flat key, much less
-within a single partition). cc-feeds reference:
-`feed_survey/emr/job.py::mapper_init` (`self._s3_jitter = random.uniform(0, 30)`).
-*Fix*: add the same 0-30s jitter to cc-lint's `_process_warc_in_child`
-first-WARC path.
+download to avoid 30 nodes simultaneously hitting one S3 prefix.
+cc-lint inherits the same fleet but skipped this. For WAT the burst
+pressure is real but the per-download wall time is short (a few
+seconds), so the contention window is narrower than for cc-feeds.
+*Recommendation*: add jitter for defensive parity with cc-feeds, but
+it is a low-impact finding for cc-lint specifically. Trivial
+one-liner if we want it.
 
 **E2 (M / M). No spot pricing.** Both projects run fully on-demand
-core fleets. m5.xlarge on-demand is ~$0.192/hr; spot is typically
-$0.05-0.07/hr (70% savings). A full-crawl run is ~30 cores × ~10h ≈
-~$60 on-demand vs ~$20 spot. The blocker is robustness: a spot
-interruption today restarts the mapper from scratch. Worth doing
-together with E6 / R1.
+core fleets. c5.xlarge on-demand is ~$0.085/hr; spot is typically
+$0.02-0.03/hr (~70% savings). With E0's c5 switch a full-crawl run
+is ~30 cores × ~10h × $0.085 ≈ ~$25 on-demand vs ~$8 spot.
+Absolute savings are modest in dollars but the % is large, and spot
+also reduces the cost of long-running ad-hoc runs. The blocker is
+robustness: a spot interruption today restarts the mapper from
+scratch. Worth doing together with R1.
 
-**E3 (L / M). Mappers are serial within a chunk.** Each mapper
-processes its ~50 WARCs sequentially: download → ArchiveIterator → lint
-→ next. Download is I/O-bound (10-30 MB/s × ~100MB WAT = 5-10 s);
-linting is CPU-bound. Pipelining the next download while the current
-one lints would save ~30% mapper wall time on warm caches. Implementation
-needs the child process to overlap with the parent's setup; tricky to
-add without breaking the crash-isolation model. Defer until E2 (spot)
-makes shorter mapper wall time more valuable.
+**E3 (DROP). Pipelined downloads.** The original review flagged
+"download next WAT while linting current" as a ~30% speedup. That
+was written assuming I/O-bound mappers. For cc-lint the download
+portion is a small fraction of mapper wall time (lint dominates), so
+pipelining yields maybe ~5-10% — not worth the complexity of
+breaking the crash-isolation model. **Dropped.**
 
 **E4 (L / S). Wheel bootstrap pulls every node from one S3 prefix.**
-30 nodes × ~30MB wheel bundle = 900 MB total at cluster start, all
-from one S3 key prefix. Within budget. Could mirror to local NVMe
-once a node has it and have peers fetch from the master, but the
-saving (~30s of cluster startup) isn't worth the complexity.
+Unchanged from original review. 30 nodes × ~30MB at cluster start =
+~900MB total from one S3 key prefix. Within budget. Could mirror to
+local NVMe and have peers fetch from the master, but the saving
+(~30s of cluster startup) isn't worth the complexity.
 
-**E5 (L / S). Speculative execution is enabled in the full-run
-mrjob.conf.** With cc-lint's per-WARC accumulation in StatsCollector
-and pickle round-trip back to the mapper, a speculated mapper attempt
-duplicates work but produces the same output (the mrjob framework
-discards the loser's output). No correctness risk. Cost is doubled
-work on slow nodes only — but if "slow node" was the symptom of a
-problem (memory pressure, network throttle), speculation may chase
-the symptom forever. *Recommendation*: leave on; revisit only if
-emr-timing logs show recurring speculation on the same paths.
+**E5 (M / S). Speculative execution is more expensive on CPU-bound
+workloads.** With cc-feeds (I/O-bound), a speculated mapper doesn't
+double CPU usage because the slow mapper is waiting on S3, not
+burning CPU. cc-lint's slow mappers are usually slow because they're
+*using* CPU — speculation duplicates the CPU work. Combined with
+mrjob's discard-loser semantics, speculation effectively doubles
+billable core-hours for any slow-but-correct mapper. *Fix*: disable
+speculation in the full-run mrjob.conf (it's already off in the test
+config). Re-enable selectively if a future run shows consistent
+slow-mapper symptoms that point to network or memory rather than CPU.
+This is a one-jobconf-line change worth ~10-20% on the slow tail.
 
-**E6 (M / S). Bootstrap installs from a single S3 bucket with no
-integrity check.** `aws s3 sync $(WHEEL_S3_PATH) /tmp/wheels/` then
-`sudo pip install --no-index`. If the wheel bucket is poisoned (write
-access compromised), every EMR node runs poisoned wheels as root.
-This is documented in the code review (E1) but the EMR-specific fix
-would be: pin wheel hashes via `--require-hashes` and check them into
-git, or maintain a signed wheel manifest. Higher value than the code
-review made it sound, since the wheels are bundled then deployed
-without a content-addressed handle.
+**E6 (M / Doc). Bootstrap installs from a single S3 bucket with no
+integrity check.** Unchanged from original. Document the wheel
+bucket access-policy requirements in README.md (cc-lint.example.mk
+already has a note as of the C5 commit).
 
-**E7 (L / S). REDUCES=20 may now be over-provisioned.** After the
-sharding refactor, ~100-200 active note keys distribute across 20
-reducers at 5-10 keys each. The big "globals" key is still a
-single-reducer bottleneck (one site_hll + field_counts merge). If
-that key's reducer becomes the long pole, dropping REDUCES to 10 or
-15 saves shuffle overhead. Worth profiling once the next full run
-produces stderr timings.
+**E7 (L / S). REDUCES=20 may be over-provisioned for a small
+reducer payload.** Unchanged from original; the merged dict is
+small enough that 10 reducers would be fine. Worth profiling once a
+full run produces stderr timings.
 
 ## R. Robustness findings
 
 **R1 (H / M). No resilience to spot interruption.** Tied to E2. A
 killed mapper restarts from scratch via mrjob's default retry (3
-attempts). Per-WARC state isn't checkpointed; the mapper has
-accumulated ~50 WARCs of stats in `self._stats_dict` and loses them
+attempts). Per-WAT state isn't checkpointed; the mapper has
+accumulated ~50 WATs of stats in `self._stats_dict` and loses them
 all on restart. With 10% hourly spot interruption × 10h = expected
 1-3 full mapper restarts per run if we switched to spot today. Two
 fixes:
 - Mid-run checkpointing: emit `mapper_final`-shaped records every N
-  WARCs into a per-attempt scratch path so a retry can resume. Adds
-  complexity but unlocks spot.
-- Smaller mapper chunks: `MAP_TASKS=3200` (25 WARCs/mapper) halves the
-  retry blast radius without checkpointing. Cheaper.
+  WATs into a per-attempt scratch path so a retry can resume.
+- Smaller mapper chunks: `MAP_TASKS=3200` (25 WATs/mapper) halves
+  the retry blast radius without checkpointing. Cheaper. **This is
+  particularly attractive for cc-lint** because a mapper's wall
+  time is CPU-dominated and roughly halves with half the chunk, so
+  smaller chunks also reduce the wall-clock target a retry has to
+  finish in.
 
-**R2 (M / S). Hadoop default 3-attempt retry is fine, but the failure
-modes aren't distinguished.** A WARC that fails consistently (e.g. a
-malformed WAT) burns 3 mapper attempts × ~3 min each before being
-skipped on the 4th. The fork-isolated child correctly returns a
-non-zero exit, but the parent doesn't track per-WARC retry counts
-across mapper attempts. *Fix*: maintain a per-(crawl_id, warc_path)
-poison-list in S3 / DynamoDB so genuinely bad WARCs are skipped after
-N retries cluster-wide.
+**R2 (M / S). 3-attempt retry doesn't deduplicate cluster-wide.** A
+WAT that fails consistently (e.g. malformed JSON) burns 3 mapper
+attempts before being skipped on the 4th. *Fix*: maintain a
+per-(crawl_id, warc_path) poison-list in S3 / DynamoDB so genuinely
+bad WATs are skipped after N retries cluster-wide.
 
 **R3 (M / S). Truncated part-* files silently degrade data.**
-`cc_lint.emr.finalize._iter_records` already handles malformed lines
-(logs WARN, skips). But a reducer that died mid-write leaves a part
-file with a truncated final record; the WARN-and-skip means we
-silently lose that record's contribution. With REDUCES=20 each part
-carries 5-10 note records → losing one is 5-10% of one note id's
-data. *Fix*: have the reducer wrap each emit in a `(key, payload)`
-size-prefixed line or emit a trailing sentinel `\n# END\n` and have
-finalize verify it.
+Unchanged from original. A reducer that died mid-write leaves a part
+file with a truncated final record; `cc_lint.emr.finalize._iter_records`
+logs WARN and skips. *Fix*: have the reducer wrap each emit in a
+size-prefixed line or emit a trailing sentinel and have finalize
+verify it.
 
-**R4 (M / S). split_paths and finalize are idempotent; the job itself
-isn't.** A re-run of `make emr` generates a new `$(FULL_RUN_NAME)` (a
-timestamp suffix), so re-attempting after a failure builds a new
-dir tree. Recoverable but not resumable; you re-pay the full cost.
-*Fix*: stable run-id derivation (`<CRAWL_ID>-<git-sha>`?) so re-runs
-land in the same paths and split_paths is idempotent against an
-existing dir, which it already is.
+**R4 (M / S). split_paths and finalize are idempotent; the job isn't.**
+A re-run of `make emr` generates a new `$(FULL_RUN_NAME)`. Recoverable
+but not resumable; you re-pay the full cost. *Fix*: stable run-id
+derivation (`<CRAWL_ID>-<git-sha>`) so re-runs land in the same paths.
 
-**R5 (L / S). Reducer state is purely summing.** Restart-safe by
-construction; trim_stats_dict is deterministic and idempotent. Mrjob
-handles attempt-loser discard correctly. No action.
+**R5 (L / S). Reducer state is purely summing.** Unchanged. No action.
 
-**R6 (M / S). No per-WARC dedup across mapper attempts.** When a
-mapper attempt 1 dies after processing 30 of 50 WARCs, attempt 2
-re-processes all 50. Stats from the 30 WARCs in attempt 1 were never
-emitted (mapper_final didn't run) so this is correctness-safe — but
-costs 30 WARCs of work. *Fix*: emit partial state via mapper-side
-counters at every WARC boundary so the framework's
-`mapreduce.task.recovery` could resume. Complex; cheap workaround is
-R1's smaller chunks.
+**R6 (M / S). No per-WAT dedup across mapper attempts.** Unchanged.
+Cheap workaround: R1's smaller chunks.
 
-**R7 (L / S). Network-blip retries are conservative.** boto3 Config
-in `cc_lint.emr.warc_source` says `max_attempts=3, mode=standard`.
-Standard mode caps retries at 3 with exponential backoff. CC's S3
-prefix occasionally throttles; raising to `mode=adaptive,
-max_attempts=5` would reduce mapper failures without adding much
-latency. *Fix*: one-line config bump.
+**R7 (L / S). Network-blip retries are conservative.** Unchanged.
+`boto3.Config(retries={"max_attempts": 3, "mode": "standard"})` →
+`mode=adaptive, max_attempts=5` would reduce mapper failures on
+transient S3 throttles. *Fix*: one-line config bump.
 
-**R8 (L / S). Hadoop counter cardinality OK.** After the bucketed
-failure counters in Phase 2b, we emit a fixed set of ~15 counters per
-mapper. Well under the default `mapreduce.job.counters.max=120`.
+**R8 (L / S). Hadoop counter cardinality OK.** Unchanged.
 
-**R9 (M / S). Wall-clock timeout protects mappers but not the cluster
-overall.** A single straggler mapper that doesn't fail but stays slow
-(e.g. 5h instead of 2h) drives the cluster cost up. Hadoop's
-`mapreduce.task.timeout` (default 600s, but our setup doesn't override)
-would kill a mapper that doesn't increment counters / report status
-for 10 min. cc-lint's child processes log every 30s, so they'll keep
-the parent reporting. *Fix*: shorten `mapreduce.task.timeout` to e.g.
-3600s so a wedged mapper gets killed and re-attempted instead of
-holding the cluster open.
+**R9 (M / S). Wall-clock timeout protects mappers but not the
+cluster.** Cap `mapreduce.task.timeout` to 3600s so a wedged mapper
+gets killed and re-attempted instead of holding the cluster open.
 
-**R10 (L / S). EMR step retries vs mapper retries.** mrjob runs the
-job as a single EMR step; step failure means the whole job fails.
-With auto-termination on, the cluster terminates and the run is lost.
-Tradeoff: keeping the cluster alive on failure for debugging means
-paying for it until you notice. Current `MRJOB_CLEANUP=TMP` cleans
-working data but keeps the cluster. *Fix*: leave as-is; the explicit
-`make emr-timing EMR_LOG_CLUSTER_ID=j-...` workflow handles
-postmortems.
+**R10 (L / S). EMR step retries vs mapper retries.** Unchanged.
+Leave as-is.
 
 ## D. Diagnostics findings
 
-**D1 (L / S). emr-timing log parser doesn't surface the new
-warc_timed_out counter.** `cc_lint/emr/timing.py` parses
-`INFO: finished WARC` / `ERROR: failed WARC` lines but doesn't have
-a regex for `ERROR: timeout WARC` added in Phase 2b. *Fix*: extend
-the regex set to bucket timeouts separately from other failures.
+**D1 (L / S). emr-timing log parser doesn't surface
+warc_timed_out counter.** Unchanged. One-regex extension.
 
-**D2 (L / S). Per-WARC timings are emitted but not aggregated at
-finalize.** The `record_process_ms`, `iterator_download_ms`,
-`warc_total_ms` Hadoop counters give cluster-wide totals but not
-per-WARC or per-mapper distributions. emr-timing reconstructs this
-from stderr.gz. *Fix*: have finalize also pull the EMR step counters
-via the AWS SDK and persist them next to stats.json for an at-a-glance
-"30k WARCs, p50 download 8.4s, p99 23s".
+**D2 (L / S). Per-WAT timings are emitted but not aggregated at
+finalize.** Unchanged. *Fix*: have finalize pull EMR step counters
+via the AWS SDK and persist next to the report.
 
 ## Suggested follow-up order
 
-If we tackle these, suggested ordering by ROI:
+With WAT-CPU profile in mind:
 
-1. **E1** (S3 jitter) — single S patch, addresses a real production
-   pressure point.
-2. **R7** (boto3 retry config) — single line of config, improves
-   transient-network resilience.
-3. **D1** (timing log parser) — small extension to surface the
-   new timeout counter.
-4. **R3** (truncated part-* sentinel) — defensive against rare partial
+1. **E0** (c5-only fleet) — single config change, ~30-50% compute
+   cost reduction. Biggest single win.
+2. **E5** (disable speculation in full-run) — single jobconf line,
+   ~10-20% saving on slow tails.
+3. **R7** (boto3 retry config) — one line, transient-network resilience.
+4. **D1** (timing log parser) — small extension for the new timeout
+   counter.
+5. **R3** (truncated part-* sentinel) — defensive against rare partial
    writes.
-5. **R9** (`mapreduce.task.timeout` cap) — single jobconf line, kills
-   wedged mappers faster.
-6. **R4** (stable run-id) — quality-of-life for resumable runs.
-7. **R1 + E2** (spot + checkpointing) — biggest cost win but the most
-   work. Worth it if cc-lint runs become regular (weekly+).
-8. **E6** (wheel hash pinning) — security hardening; do after the
-   pipeline is stable.
+6. **R9** (mapreduce.task.timeout cap) — kills wedged mappers faster.
+7. **R4** (stable run-id) — quality-of-life for resumable runs.
+8. **R1 + E2** (spot + checkpointing or smaller chunks) — biggest
+   cost win at the cost of the most work. With E0's already-cheaper
+   fleet the absolute dollar savings are smaller than they looked in
+   the first draft, so this is less urgent than it appeared.
+9. **E1** (S3 jitter) — defensive parity with cc-feeds; low impact
+   for cc-lint specifically.
+10. **E6** (wheel hash pinning) — security hardening once stable.
 
-E3 (pipelined downloads), E4 (wheel mirror), E5 (speculation review),
-E7 (REDUCES tuning), R5 (no-action), R6 (per-WARC dedup), R8 (counter
-limit), R10 (cluster auto-terminate), D2 (counter aggregation) are
-either deferrable or no-action.
+E3 (pipelined downloads) is dropped as not worth it for a CPU-bound
+workload. E4, E7, R5, R6, R8, R10, D2 deferrable or no-action.
