@@ -61,10 +61,6 @@ TOP_K_VAR_VALUES = 2000  # entries kept per vars[var_name] counts dict
 TOP_K_FIELD_COUNTS = 5000  # entries kept in field_counts / unprocessed_counts
 
 
-sys.stderr.write("DEBUG: Python interpreter started successfully\n")
-sys.stderr.flush()
-
-
 def _merge_counts(target: Dict[str, int], source: Dict[str, int]) -> None:
     for key, count in source.items():
         target[key] = target.get(key, 0) + int(count)
@@ -344,7 +340,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         init_start = time.perf_counter()
         try:
             sys.stderr.write("*" * 50 + "\n")
-            sys.stderr.write("DEBUG: mapper_init starting\n")
+            sys.stderr.write("DEBUG: mapper_init starting (Python OK)\n")
             self.stats = StatsCollector()
             self.top_sites: Optional[Set[str]] = None
             self.sample_sites: Optional[Set[str]] = None

@@ -56,7 +56,7 @@ def load_top_sites(path: str, limit: int) -> Set[str]:
                 parts = line.strip().split(",")
                 if len(parts) >= 2:
                     sites.add(parts[1])
-    except Exception as exc:  # pylint: disable=broad-except
+    except (OSError, UnicodeDecodeError) as exc:
         logging.getLogger(__name__).error("Error loading top sites: %s", exc)
 
     return sites
@@ -84,7 +84,9 @@ def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
         if host.startswith("www."):
             host = host[4:]
         return host
-    except Exception:  # pylint: disable=broad-except
+    except (ValueError, AttributeError, TypeError):
+        # urlparse raises ValueError on malformed IPv6; AttributeError /
+        # TypeError catch unexpected non-string inputs.
         return None
 
 

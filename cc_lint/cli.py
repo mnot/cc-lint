@@ -117,10 +117,19 @@ def _process_single_warc(
                     continue
                 stats.process_linter(linter)
             except Exception as exc:  # pylint: disable=broad-except
-                logger.warning("Error linting record in %s: %s", warc_path, exc)
+                # Broad on purpose: one bad record must not abort the WARC.
+                logger.warning(
+                    "Error linting record in %s (%s): %s",
+                    warc_path,
+                    type(exc).__name__,
+                    exc,
+                )
                 continue
     except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Error streaming %s: %s", warc_path, exc)
+        # Broad on purpose: one bad WARC must not abort the run.
+        logger.error(
+            "Error streaming %s (%s): %s", warc_path, type(exc).__name__, exc
+        )
 
 
 @cli.command(name="report")
@@ -132,7 +141,11 @@ def report_cc(input_file: str, output: str) -> None:
         generate_report(input_file, output)
         logger.info("Report generated at %s", output)
     except Exception as exc:  # pylint: disable=broad-except
-        logger.error("Error generating report: %s", exc)
+        # Broad on purpose: surface any render failure to the operator with
+        # the exception type so they can triage without a stack trace.
+        logger.error(
+            "Error generating report (%s): %s", type(exc).__name__, exc
+        )
 
 
 if __name__ == "__main__":

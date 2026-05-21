@@ -1,7 +1,11 @@
-from typing import Optional, Any
 import json
+import logging
+from typing import Any, Optional
+
 from dateutil.parser import parse
 from httplint import HttpResponseLinter
+
+logger = logging.getLogger(__name__)
 
 
 def lint_record(record: Any) -> Optional[HttpResponseLinter]:
@@ -25,7 +29,11 @@ def _lint_wat_record(record: Any) -> Optional[HttpResponseLinter]:
     try:
         content = record.content_stream().read()
         data = json.loads(content)
-    except Exception:  # pylint: disable=broad-except
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError, OSError) as exc:
+        # Malformed WAT envelope, truncated read, or a record whose
+        # content_stream isn't byte-like. Log so EMR stderr surfaces the
+        # rate of parse failures; return None so the caller skips the record.
+        logger.warning("WAT record parse failed (%s): %s", type(exc).__name__, exc)
         return None
 
     response_meta = (
@@ -50,7 +58,8 @@ def _lint_wat_record(record: Any) -> Optional[HttpResponseLinter]:
         try:
             dt = parse(warc_date)
             linter.start_time = dt.timestamp()
-        except Exception:  # pylint: disable=broad-except
+        except (ValueError, TypeError, OverflowError):
+            # Malformed or out-of-range WARC-Date; leave start_time unset.
             pass
 
     # Status Line
@@ -119,7 +128,8 @@ def _lint_warc_record(record: Any) -> Optional[HttpResponseLinter]:
         try:
             dt = parse(warc_date)
             linter.start_time = dt.timestamp()
-        except Exception:  # pylint: disable=broad-except
+        except (ValueError, TypeError, OverflowError):
+            # Malformed or out-of-range WARC-Date; leave start_time unset.
             pass
 
     # Protocol, status code, phrase
