@@ -74,6 +74,34 @@ class TestMergeResults(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 merge_results(results)
 
+    def test_csp_sizes_merge_max(self) -> None:
+        with tempfile.TemporaryDirectory() as results:
+            _write_part(
+                os.path.join(results, "part-00000"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 1,
+                            "field_counts": {},
+                            "unprocessed_counts": {},
+                        },
+                    ),
+                    ("csp_sizes", {"a.example": 100, "b.example": 0}),
+                ],
+            )
+            _write_part(
+                os.path.join(results, "part-00001"),
+                [
+                    ("csp_sizes", {"a.example": 500, "c.example": 300}),
+                ],
+            )
+            merged = merge_results(results)
+            self.assertEqual(
+                merged["csp_max_by_site"],
+                {"a.example": 500, "b.example": 0, "c.example": 300},
+            )
+
     def test_skips_malformed_lines(self) -> None:
         with tempfile.TemporaryDirectory() as results:
             with open(

@@ -197,6 +197,27 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Tranco top 10,000", md)
         self.assertIn("2026-05-21T12:34:56Z", md)
 
+    def test_csp_histogram_renders(self) -> None:
+        data = dict(SAMPLE_STATS)
+        data["csp_max_by_site"] = {
+            "no-csp.example": 0,
+            "tiny.example": 50,
+            "small.example": 200,
+            "small2.example": 450,
+            "medium.example": 1200,
+            "big.example": 4500,
+            "huge.example": 15000,
+        }
+        html, md = self._render_both(data)
+        self.assertIn("Content-Security-Policy size by site", html)
+        self.assertIn("No CSP header", html)
+        self.assertIn("100-499 B", html)
+        self.assertIn("10000+ B", html)
+        self.assertIn("csp-bar", html)
+        # Same content in markdown.
+        self.assertIn("Content-Security-Policy size by site", md)
+        self.assertIn("| 1-99 B |", md)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,

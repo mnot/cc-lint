@@ -42,7 +42,7 @@ def _load_top_sites_set(
     return load_top_sites(tranco_path, top_sites)
 
 
-def _run_lint_loop(
+def _run_lint_loop(  # pylint: disable=too-many-positional-arguments
     warc_paths: List[str],
     limit: int,
     record_limit: int,

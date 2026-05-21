@@ -105,6 +105,34 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
         self.assertGreater(estimate, 20)
         self.assertLess(estimate, 200)
 
+    def test_csp_size_recorded_per_site_max(self) -> None:
+        # Three responses, two sites:
+        # a.example sees a small CSP then a big one -> stored as the big one
+        # b.example sees no CSP -> stored as 0
+        stats = StatsCollector()
+        big_csp = (
+            b"default-src 'self'; script-src 'self' https://*.cdn.example; "
+            b"frame-ancestors 'none'"
+        )
+        for url, csp_value in [
+            ("http://a.example/", b"default-src 'self'"),
+            ("http://a.example/2", big_csp),
+            ("http://b.example/", None),
+        ]:
+            linter = _linter_for(url)
+            linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+            headers = []
+            if csp_value is not None:
+                headers.append((b"content-security-policy", csp_value))
+            linter.process_headers(headers)
+            linter.finish_content(True)
+            stats.process_linter(linter)
+        self.assertIn("a.example", stats.csp_max_by_site)
+        self.assertIn("b.example", stats.csp_max_by_site)
+        # The max of two CSP sizes from a.example should be the larger one.
+        self.assertGreater(stats.csp_max_by_site["a.example"], 20)
+        self.assertEqual(stats.csp_max_by_site["b.example"], 0)
+
     def test_to_dict_carries_sites_hll_and_note_data(self) -> None:
         stats = StatsCollector()
         linter = _linter_for("http://a.example/")

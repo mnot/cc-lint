@@ -38,8 +38,10 @@ import sys
 from typing import Any, Dict, Iterator, Tuple
 
 from cc_lint.emr.job import (
+    CSP_SIZES_KEY,
     GLOBALS_KEY,
     NOTE_KEY_PREFIX,
+    merge_csp_sizes,
     merge_globals,
     merge_note,
     trim_stats_dict,
@@ -68,7 +70,7 @@ def _iter_records(results_dir: str) -> Iterator[Tuple[str, Dict[str, Any]]]:
 
 def merge_results(results_dir: str) -> Dict[str, Any]:
     """Merge sharded reducer output into a single stats dict."""
-    merged: Dict[str, Any] = {"notes": {}}
+    merged: Dict[str, Any] = {"notes": {}, "csp_max_by_site": {}}
     note_counts: Dict[str, int] = {}
     saw_globals = False
 
@@ -83,6 +85,8 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
                 note_id, {"count": 0, "samples": [], "vars": {}}
             )
             merge_note(target, value)
+        elif key == CSP_SIZES_KEY:
+            merge_csp_sizes(merged["csp_max_by_site"], value)
         else:
             print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
 

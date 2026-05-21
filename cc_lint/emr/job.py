@@ -154,6 +154,13 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
 
 GLOBALS_KEY = "globals"
 NOTE_KEY_PREFIX = "note:"
+CSP_SIZES_KEY = "csp_sizes"
+
+# Defensive cap on the per-site CSP-size dict. The dict naturally bounds at
+# the cardinality of distinct sites the mapper saw (~ TOP_N in practice),
+# but with no top-sites filter it could grow unbounded; trim at this cap so
+# a runaway response set can't blow up the shuffle.
+TOP_K_CSP_SITES = 100000
 
 # Hadoop limits the number of distinct counter names (default 120). Bucket
 # child-process failures into a fixed cardinality set instead of emitting one
@@ -203,6 +210,36 @@ def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     # first one we see and stick with it.
     if "run_context" not in target and source.get("run_context"):
         target["run_context"] = source["run_context"]
+
+
+def merge_csp_sizes(target: Dict[str, int], source: Dict[str, int]) -> None:
+    """Merge a per-site CSP-size dict into ``target`` keeping the max per site.
+
+    A site appears in many WATs (and may serve different CSP values from
+    different URLs). The histogram counts each site once at the largest CSP
+    byte size it ever served, so reducer merges take the max rather than
+    sum.
+    """
+    for site, size in source.items():
+        prev = target.get(site)
+        size_int = int(size)
+        if prev is None or size_int > prev:
+            target[site] = size_int
+
+
+def _trim_csp_sizes(csp_sizes: Dict[str, int]) -> Dict[str, int]:
+    """Cap the CSP-size dict to TOP_K_CSP_SITES sites by size (desc).
+
+    Bounded already by Tranco --top-sites in practice; this is a defensive
+    safety net for runs without that gate. Sites with size 0 (seen, no CSP)
+    sort to the bottom and are the first dropped if we hit the cap.
+    """
+    if len(csp_sizes) <= TOP_K_CSP_SITES:
+        return csp_sizes
+    top_items = sorted(csp_sizes.items(), key=lambda kv: kv[1], reverse=True)[
+        :TOP_K_CSP_SITES
+    ]
+    return dict(top_items)
 
 
 def _trim_note(note: Dict[str, Any]) -> Dict[str, Any]:
@@ -522,6 +559,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         yield GLOBALS_KEY, globals_payload
         for note_id, note in stats.get("notes", {}).items():
             yield NOTE_KEY_PREFIX + note_id, note
+        csp_sizes = stats.get("csp_max_by_site") or {}
+        if csp_sizes:
+            yield CSP_SIZES_KEY, _trim_csp_sizes(csp_sizes)
 
     # No combiner: mapper_final emits each (key, value) exactly once per
     # mapper, so there is nothing for a combiner to fold. The mrjob default
@@ -540,6 +580,11 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             for value in values:
                 merge_note(merged_note, value)
             yield key, _trim_note(merged_note)
+        elif key == CSP_SIZES_KEY:
+            merged_csp: Dict[str, int] = {}
+            for value in values:
+                merge_csp_sizes(merged_csp, value)
+            yield CSP_SIZES_KEY, _trim_csp_sizes(merged_csp)
 
 
 def main() -> None:

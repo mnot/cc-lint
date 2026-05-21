@@ -201,6 +201,45 @@ def _render_field_counts(
     return lines
 
 
+_CSP_BUCKETS = [
+    (0, 0, "No CSP header"),
+    (1, 99, "1-99 B"),
+    (100, 499, "100-499 B"),
+    (500, 999, "500-999 B"),
+    (1000, 1999, "1000-1999 B"),
+    (2000, 4999, "2000-4999 B"),
+    (5000, 9999, "5000-9999 B"),
+    (10000, None, "10000+ B"),
+]
+
+
+def _render_csp_section(csp_sizes: Dict[str, int]) -> List[str]:
+    if not csp_sizes:
+        return []
+    total = len(csp_sizes)
+    counts: List[int] = [0] * len(_CSP_BUCKETS)
+    for size in csp_sizes.values():
+        for idx, (low, high, _label) in enumerate(_CSP_BUCKETS):
+            if size >= low and (high is None or size <= high):
+                counts[idx] += 1
+                break
+    lines = [
+        "## Content-Security-Policy size by site",
+        "",
+        "Maximum CSP header byte size each site served across all responses; "
+        "each site counted once at its largest CSP.",
+        "",
+        "| CSP size | Sites | % of sites |",
+        "| --- | --- | --- |",
+    ]
+    for idx, (_low, _high, label) in enumerate(_CSP_BUCKETS):
+        count = counts[idx]
+        pct = (count / total * 100) if total else 0
+        lines.append(f"| {label} | {_fmt_count(count)} | {pct:.1f}% |")
+    lines.append("")
+    return lines
+
+
 def _render_unprocessed(
     unprocessed_counts: Dict[str, int], truncated: bool
 ) -> List[str]:
@@ -286,6 +325,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
         )
     )
+    lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
     lines.extend(
         _render_unprocessed(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))

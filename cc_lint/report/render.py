@@ -14,6 +14,7 @@ from cc_lint.hll import hll_estimate
 from cc_lint.report.markdown import render_markdown
 from cc_lint.report.sections import (
     count_total_notes,
+    render_csp_section,
     render_field_counts_section,
     render_header_stats,
     render_missing_section,
@@ -51,6 +52,8 @@ def _build_html(data: Dict[str, Any]) -> str:
     run_context = data.get("run_context") or {}
     finalized_at = data.get("finalized_at")
 
+    csp_sizes = data.get("csp_max_by_site") or {}
+
     body_parts = [
         render_header_stats(
             total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
@@ -60,6 +63,7 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_field_counts_section(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
         ),
+        render_csp_section(csp_sizes),
         render_unprocessed_section(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         ),

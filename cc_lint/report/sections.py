@@ -386,6 +386,65 @@ def render_field_counts_section(
     )
 
 
+CSP_BUCKETS = [
+    (0, 0, "No CSP header"),
+    (1, 99, "1-99 B"),
+    (100, 499, "100-499 B"),
+    (500, 999, "500-999 B"),
+    (1000, 1999, "1000-1999 B"),
+    (2000, 4999, "2000-4999 B"),
+    (5000, 9999, "5000-9999 B"),
+    (10000, None, "10000+ B"),
+]
+
+
+def _bucket_csp_sizes(csp_sizes: Dict[str, int]) -> List[Tuple[str, int]]:
+    """Bucket per-site max CSP sizes into the configured ranges.
+
+    Returns a list of (label, count) in bucket order.
+    """
+    buckets: List[int] = [0] * len(CSP_BUCKETS)
+    for size in csp_sizes.values():
+        for idx, (low, high, _label) in enumerate(CSP_BUCKETS):
+            if size >= low and (high is None or size <= high):
+                buckets[idx] += 1
+                break
+    return [(CSP_BUCKETS[i][2], buckets[i]) for i in range(len(CSP_BUCKETS))]
+
+
+def render_csp_section(csp_sizes: Dict[str, int]) -> str:
+    if not csp_sizes:
+        return ""
+    total = len(csp_sizes)
+    rows: List[str] = []
+    for label, count in _bucket_csp_sizes(csp_sizes):
+        pct = (count / total * 100) if total else 0
+        bar_width = int(pct * 2)  # 200px max
+        rows.append(
+            f"<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{_format_count(count)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f'<td><span class="csp-bar" style="width:{bar_width}px"></span></td>'
+            f"</tr>"
+        )
+    return (
+        '<section id="csp">'
+        '<h2>Content-Security-Policy size by site</h2>'
+        '<p class="muted">Distribution of the maximum CSP header byte size '
+        "each site served, across all responses analyzed. A site appears in "
+        "exactly one bucket -- the largest CSP it ever returned, regardless "
+        "of how many WAT files it appeared in. "
+        f"Total sites with header data: {_format_count(total)}.</p>"
+        '<table class="data-table csp-table">'
+        "<thead><tr><th>CSP size</th><th>Sites</th><th>% of sites</th>"
+        "<th></th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
 def render_unprocessed_section(
     unprocessed_counts: Dict[str, int], truncated: bool
 ) -> str:

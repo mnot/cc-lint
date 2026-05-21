@@ -4,9 +4,12 @@ import unittest
 from typing import Any, Dict
 
 from cc_lint.emr.job import (
+    TOP_K_CSP_SITES,
     TOP_K_FIELD_COUNTS,
     TOP_K_VAR_VALUES,
     _failure_bucket,
+    _trim_csp_sizes,
+    merge_csp_sizes,
     merge_globals,
     merge_note,
     sample_key,
@@ -229,6 +232,36 @@ class TestFailureBucket(unittest.TestCase):
 
     def test_none(self) -> None:
         self.assertEqual(_failure_bucket(None), "warc_exit_unknown")
+
+
+class TestMergeCspSizes(unittest.TestCase):
+    def test_merge_takes_max_per_site(self) -> None:
+        target: Dict[str, int] = {}
+        merge_csp_sizes(target, {"a.example": 100, "b.example": 200})
+        merge_csp_sizes(target, {"a.example": 300, "c.example": 50})
+        self.assertEqual(
+            target, {"a.example": 300, "b.example": 200, "c.example": 50}
+        )
+
+    def test_merge_keeps_zeros(self) -> None:
+        # site "a" appeared with no CSP in source -> stays 0 in target
+        target: Dict[str, int] = {}
+        merge_csp_sizes(target, {"a.example": 0})
+        self.assertEqual(target, {"a.example": 0})
+        # later non-zero observation upgrades it
+        merge_csp_sizes(target, {"a.example": 500})
+        self.assertEqual(target, {"a.example": 500})
+
+    def test_trim_caps_to_top_k_by_size(self) -> None:
+        many = {f"site-{i}.example": i for i in range(TOP_K_CSP_SITES + 50)}
+        trimmed = _trim_csp_sizes(many)
+        self.assertEqual(len(trimmed), TOP_K_CSP_SITES)
+        # The TOP_K_CSP_SITES largest sizes should survive.
+        kept_min = min(trimmed.values())
+        dropped_max = max(
+            size for site, size in many.items() if site not in trimmed
+        )
+        self.assertGreaterEqual(kept_min, dropped_max)
 
 
 class TestSampleKey(unittest.TestCase):

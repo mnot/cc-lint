@@ -14,6 +14,20 @@ from cc_lint.hll import (
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
 
+
+def _header_value_byte_len(value: Any) -> int:
+    """Best-effort byte length of a header field value as it appeared on the wire.
+
+    httplint may hand us a str or bytes depending on how the linter was fed.
+    For str, encode as UTF-8 since CSP values are ASCII in practice and
+    UTF-8 is a superset; for anything else fall back to ``len(str(...))``.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        return len(value)
+    if isinstance(value, str):
+        return len(value.encode("utf-8", errors="replace"))
+    return len(str(value))
+
 # Configuration for variable tracking
 # Map Note ID to list of variable names to track statistics for
 VARS_TO_TRACK = {
@@ -163,6 +177,11 @@ class StatsCollector:
         # per-note HLLs for "seen on N sites" cardinality. Per-note HLLs use a
         # smaller precision to keep shuffle bounded across many notes.
         self.sites_hll: List[int] = make_registers(HLL_P_GLOBAL)
+        # Per-site maximum CSP header byte size. A site appears in many WATs
+        # with potentially different responses and CSP values; we keep the
+        # maximum so the report's histogram counts each site once at the
+        # largest CSP it ever served. 0 means "site seen, no CSP."
+        self.csp_max_by_site: Dict[str, int] = {}
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -177,7 +196,7 @@ class StatsCollector:
                 continue
             self._process_note(note, linter, site)
 
-        self._process_headers(linter)
+        self._process_headers(linter, site)
 
     def _process_note(
         self, note: Note, linter: HttpResponseLinter, site: Optional[str]
@@ -252,10 +271,26 @@ class StatsCollector:
         if sample_site not in existing_sites:
             self.note_data[note_id]["samples"].append(sample)
 
-    def _process_headers(self, linter: HttpResponseLinter) -> None:
+    def _process_headers(
+        self, linter: HttpResponseLinter, site: Optional[str]
+    ) -> None:
         # Count fields (case-insensitive); decode names if they are bytes.
-        for name, _value in linter.headers.text:
-            self.field_counts[str(name).lower()] += 1
+        # Capture CSP byte size for the per-site histogram while we iterate.
+        csp_bytes = 0
+        for name, value in linter.headers.text:
+            name_lower = str(name).lower()
+            self.field_counts[name_lower] += 1
+            if name_lower == "content-security-policy":
+                csp_bytes += _header_value_byte_len(value)
+
+        if site:
+            prev = self.csp_max_by_site.get(site, 0)
+            if csp_bytes > prev:
+                self.csp_max_by_site[site] = csp_bytes
+            elif site not in self.csp_max_by_site:
+                # Record the site with size 0 so the histogram can show
+                # "no CSP" as a distinct bucket rather than missing data.
+                self.csp_max_by_site[site] = 0
 
         # Count unprocessed headers, ignoring crawler-injected ones.
         for name, handler in linter.headers.handlers.items():
@@ -271,4 +306,5 @@ class StatsCollector:
             "field_counts": dict(self.field_counts),
             "unprocessed_counts": dict(self.unprocessed_counts),
             "sites_hll": self.sites_hll,
+            "csp_max_by_site": dict(self.csp_max_by_site),
         }

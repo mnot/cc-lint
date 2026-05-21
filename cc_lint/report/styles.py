@@ -204,6 +204,16 @@ STYLE = """
     max-width: 56rem;
   }
 
+  table.csp-table td:last-child { width: 220px; }
+  span.csp-bar {
+    background: var(--link);
+    border-radius: 2px;
+    display: inline-block;
+    height: 8px;
+    vertical-align: middle;
+    min-width: 1px;
+  }
+
   section { margin-top: 2.5rem; }
   section:first-of-type { margin-top: 0; }
 """
