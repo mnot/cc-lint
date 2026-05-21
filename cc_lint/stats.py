@@ -52,7 +52,6 @@ def _header_value_byte_len(value: Any) -> int:
 VARS_TO_TRACK = {
     "FIELD_DEPRECATED": ["field_name"],
     "SET_COOKIE_UNKNOWN_ATTRIBUTE": ["attribute"],
-    "SERVER_TIMING_MISSING_DUR": ["metric"],
     "REQUEST_HDR_IN_RESPONSE": ["field_name"],
     "BAD_SYNTAX": ["field_name"],
     "CONTENT_TYPE_MISMATCH": ["sniffed_type", "declared_type"],
