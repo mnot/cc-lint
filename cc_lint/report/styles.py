@@ -185,9 +185,11 @@ STYLE = """
     letter-spacing: .04em;
     border-bottom: 2px solid var(--card-border);
   }
-  table.var-table tbody tr:nth-child(odd):not(.samples-row) { background: var(--row-alt); }
-  table.var-table .samples-row > td { background: transparent; padding-top: 0; padding-bottom: .5rem; }
-  table.var-table .samples-row details > summary { cursor: pointer; color: var(--muted); font-size: .85em; }
+  table.var-table tbody tr:nth-child(odd) { background: var(--row-alt); }
+
+  .note-summary { margin: .25rem 0 .75rem; color: var(--fg); font-style: italic; }
+  details.note-samples { margin: .25rem 0 .75rem; }
+  details.note-samples > summary { cursor: pointer; color: var(--muted); font-size: .9em; }
 
   .missing-list { columns: 2 14rem; column-gap: 1.25rem; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .85em; }
   .missing-list li { break-inside: avoid; }

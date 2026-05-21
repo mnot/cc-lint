@@ -14,7 +14,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License"
 ]
 dependencies = [
-    "httplint>=2026.1.10",
+    "httplint>=2026.5.2",
     "warcio",
     "boto3",
     "click",

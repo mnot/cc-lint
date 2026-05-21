@@ -74,6 +74,23 @@ def build_category_index() -> Dict[str, str]:
     return index
 
 
+def build_summary_index() -> Dict[str, str]:
+    """Map note class name -> raw summary template from httplint.
+
+    The template may contain ``%(var_name)s`` placeholders. We surface it
+    raw so the report can show what each note means without needing a
+    fired instance.
+    """
+    index: Dict[str, str] = {}
+    for note_cls in _all_note_subclasses(Note):
+        if note_cls.__module__.startswith("tests."):
+            continue
+        summary = getattr(note_cls, "_summary", "") or ""
+        if summary:
+            index[note_cls.__name__] = summary
+    return index
+
+
 def category_display_order() -> List[str]:
     """Return category enum names in the order we want to render them.
 

@@ -14,11 +14,14 @@ from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import (
     build_category_index,
     build_severity_index,
+    build_summary_index,
     category_display_order,
     classify_unseen,
     possible_note_ids,
 )
 from cc_lint.report.styles import METHODOLOGY_NOTE
+
+_NOTE_SUMMARIES = build_summary_index()
 
 
 def _fmt_count(value: int) -> str:
@@ -40,6 +43,9 @@ def _render_run_context(
     version = run_context.get("cc_lint_version") or ""
     if version:
         parts.append(f"**cc-lint:** v{version}")
+    httplint_version = run_context.get("httplint_version") or ""
+    if httplint_version:
+        parts.append(f"**httplint:** v{httplint_version}")
     top_n = int(run_context.get("top_sites") or 0)
     if top_n:
         parts.append(f"**Top-sites filter:** Tranco top {_fmt_count(top_n)}")
@@ -139,6 +145,11 @@ def _render_note_block(
         if site_est > 0:
             heading_bits.append(f"(~{_fmt_count(site_est)} sites)")
     lines = [" ".join(heading_bits), ""]
+
+    summary_template = _NOTE_SUMMARIES.get(note_id, "")
+    if summary_template:
+        lines.append(summary_template)
+        lines.append("")
 
     samples = note_data.get("samples") or []
     if samples:

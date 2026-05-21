@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import traceback
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from multiprocessing import get_context
 from typing import Any, Dict, Generator, Iterator, List, Optional, Set, Tuple
 
@@ -37,6 +38,13 @@ from cc_lint.stats import StatsCollector
 from cc_lint.top_sites import load_top_sites
 
 
+def _httplint_version() -> str:
+    try:
+        return _pkg_version("httplint")
+    except PackageNotFoundError:
+        return ""
+
+
 def _build_run_context(options: Any) -> Dict[str, Any]:
     """Snapshot the run-shaping flags so the report can show provenance."""
     return {
@@ -47,6 +55,7 @@ def _build_run_context(options: Any) -> Dict[str, Any]:
         "warc_limit": int(getattr(options, "limit", 0)),
         "warc_timeout_s": int(getattr(options, "warc_timeout", 0)),
         "cc_lint_version": cc_lint.__version__,
+        "httplint_version": _httplint_version(),
     }
 
 

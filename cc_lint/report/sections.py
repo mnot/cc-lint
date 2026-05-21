@@ -11,10 +11,13 @@ import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.hll import hll_estimate
+from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
 
 
 REDBOT_BASE = "https://redbot.org/check?uri="
+
+_NOTE_SUMMARIES = build_summary_index()
 
 
 # ---- formatting helpers ----------------------------------------------------
@@ -74,6 +77,9 @@ def render_run_context(
     version = run_context.get("cc_lint_version") or ""
     if version:
         pills.append(_format_pill("cc-lint", f"v{version}"))
+    httplint_version = run_context.get("httplint_version") or ""
+    if httplint_version:
+        pills.append(_format_pill("httplint", f"v{httplint_version}"))
     top_n = int(run_context.get("top_sites") or 0)
     if top_n:
         pills.append(
@@ -153,9 +159,7 @@ def render_header_stats(
 # ---- per-note rendering ----------------------------------------------------
 
 
-def _render_field_error_block(
-    counts: Dict[str, int], var_samples: Dict[str, List[Dict[str, Any]]]
-) -> str:
+def _render_field_error_block(counts: Dict[str, int]) -> str:
     """Render the special STRUCTURED_FIELD_PARSE_ERROR.field_error grouping."""
     grouped: Dict[str, List[Tuple[str, int]]] = {}
     for full_key, count in counts.items():
@@ -170,15 +174,9 @@ def _render_field_error_block(
         errors = sorted(grouped[field], key=lambda item: item[1], reverse=True)
         error_items: List[str] = []
         for err, count in errors:
-            full_key = f"{field}: {err}" if err != field else err
-            samples_html = ""
-            samples = var_samples.get(full_key) or []
-            if samples:
-                items = "".join(_sample_li(s) for s in samples)
-                samples_html = f"<ul class=\"samples\">{items}</ul>"
             error_items.append(
                 f"<li><span class=\"err\">{html.escape(err)}</span> "
-                f"<span class=\"muted\">({_format_count(count)})</span>{samples_html}</li>"
+                f"<span class=\"muted\">({_format_count(count)})</span></li>"
             )
         rows.append(
             "<tr>"
@@ -204,7 +202,6 @@ def _render_field_error_block(
 def _render_var_block(
     var_name: str,
     counts: Dict[str, int],
-    var_samples: Dict[str, List[Dict[str, Any]]],
     field_counts: Dict[str, int],
 ) -> str:
     is_field_name = var_name == "field_name"
@@ -227,15 +224,6 @@ def _render_var_block(
                 cells += [_format_count(total), "—"]
         cells_html = "".join(f"<td>{c}</td>" for c in cells)
         rows.append(f"<tr>{cells_html}</tr>")
-        samples = var_samples.get(val) or []
-        if samples:
-            colspan = len(head_cells)
-            sample_lis = "".join(_sample_li(s) for s in samples)
-            rows.append(
-                f"<tr class=\"samples-row\"><td colspan=\"{colspan}\">"
-                f"<details><summary>Samples ({len(samples)})</summary>"
-                f"<ul class=\"samples\">{sample_lis}</ul></details></td></tr>"
-            )
 
     if len(sorted_vals) > 25:
         rows.append(
@@ -258,13 +246,9 @@ def _render_variable_stats(
     var_stats: Dict[str, Dict[str, int]] = note_data.get("vars", {}) or {}
     if not var_stats:
         return ""
-    all_var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = note_data.get(
-        "var_samples", {}
-    ) or {}
     truncated_vars = note_data.get("truncated_vars") or {}
     blocks: List[str] = []
     for var_name, counts in var_stats.items():
-        var_samples = all_var_samples.get(var_name, {})
         if truncated_vars.get(var_name):
             blocks.append(
                 f'<p class="muted truncated" data-var="{html.escape(var_name)}">'
@@ -273,11 +257,9 @@ def _render_variable_stats(
             )
         if var_name == "field_error":
             blocks.append("<h4>field_error</h4>")
-            blocks.append(_render_field_error_block(counts, var_samples))
+            blocks.append(_render_field_error_block(counts))
         else:
-            blocks.append(
-                _render_var_block(var_name, counts, var_samples, field_counts)
-            )
+            blocks.append(_render_var_block(var_name, counts, field_counts))
     return f'<div class="var-stats">{"".join(blocks)}</div>'
 
 
@@ -290,12 +272,21 @@ def _render_note_card(
     count = int(note_data.get("count", 0))
     samples = note_data.get("samples") or []
 
+    summary_template = _NOTE_SUMMARIES.get(note_id, "")
+    summary_html = ""
+    if summary_template:
+        summary_html = (
+            f'<p class="note-summary">{html.escape(summary_template)}</p>'
+        )
+
     sample_html = ""
     if samples:
+        items = "".join(_sample_li(s) for s in samples)
         sample_html = (
-            "<ul class=\"samples\">"
-            f"{''.join(_sample_li(s) for s in samples)}"
-            "</ul>"
+            "<details class=\"note-samples\">"
+            f"<summary>Samples ({_format_count(len(samples))})</summary>"
+            f"<ul class=\"samples\">{items}</ul>"
+            "</details>"
         )
 
     var_html = _render_variable_stats(note_data, field_counts)
@@ -324,7 +315,7 @@ def _render_note_card(
         f'<span class="note-count" title="{html.escape(count_title)}">'
         f'{_format_count(count)}</span>'
         "</summary>"
-        f'<div class="note-body">{sample_html}{var_html}</div>'
+        f'<div class="note-body">{summary_html}{sample_html}{var_html}</div>'
         "</details>"
     )
 
