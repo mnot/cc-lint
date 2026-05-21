@@ -68,7 +68,13 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_health_summary(severity_counts),
         render_category_overview(notes, category_index, category_order),
         render_notes_section(
-            notes, field_counts, severity_index, category_index, category_order
+            notes,
+            field_counts,
+            severity_index,
+            category_index,
+            category_order,
+            total_notes,
+            distinct_sites_estimate,
         ),
         render_field_counts_section(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))

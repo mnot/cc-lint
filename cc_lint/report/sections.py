@@ -268,6 +268,7 @@ def _render_note_card(
     note_data: Dict[str, Any],
     severity: str,
     field_counts: Dict[str, int],
+    distinct_sites_estimate: Optional[int] = None,
 ) -> str:
     count = int(note_data.get("count", 0))
     samples = note_data.get("samples") or []
@@ -301,10 +302,15 @@ def _render_note_card(
     if sites_hll:
         site_est = hll_estimate(sites_hll)
         if site_est > 0:
+            pct = ""
+            if distinct_sites_estimate and distinct_sites_estimate > 0:
+                share = site_est / distinct_sites_estimate * 100
+                pct = f" ({share:.1f}%)"
             sites_pill = (
                 f'<span class="note-sites" title="HyperLogLog estimate of '
-                "distinct sites where this note fired.\">"
-                f"~{_format_count(site_est)} sites</span>"
+                "distinct sites where this note fired, as a share of "
+                'all distinct sites analyzed.">'
+                f"~{_format_count(site_est)} sites{pct}</span>"
             )
     return (
         f'<details class="note severity-{severity}"{open_attr}>'
@@ -333,12 +339,14 @@ def _note_sort_key(
     return (-_SEVERITY_ORDER.get(severity, 0), -count, note_id)
 
 
-def render_notes_section(
+def render_notes_section(  # pylint: disable=too-many-positional-arguments
     notes: Dict[str, Any],
     field_counts: Dict[str, int],
     severity_index: Dict[str, str],
     category_index: Dict[str, str],
     category_order: List[str],
+    total_notes: int = 0,
+    distinct_sites_estimate: Optional[int] = None,
 ) -> str:
     """Render notes grouped by httplint category.
 
@@ -374,15 +382,22 @@ def render_notes_section(
         )
         cards = [
             _render_note_card(
-                note_id, data, severity_index.get(note_id, "warn"), field_counts
+                note_id,
+                data,
+                severity_index.get(note_id, "warn"),
+                field_counts,
+                distinct_sites_estimate,
             )
             for note_id, data in entries
         ]
+        cat_pct = ""
+        if total_notes > 0:
+            cat_pct = f" ({total_occ / total_notes * 100:.1f}% of occurrences)"
         sections.append(
             f'<section class="note-category" id="cat-{html.escape(category.lower())}">'
             f'<h3>{html.escape(_pretty_category(category))} '
             f'<span class="cat-totals">{_format_count(total_occ)} occurrences '
-            f'across {_format_count(len(entries))} note types</span></h3>'
+            f'across {_format_count(len(entries))} note types{cat_pct}</span></h3>'
             f'<div class="note-list">{"".join(cards)}</div>'
             "</section>"
         )
@@ -487,14 +502,17 @@ def render_category_overview(
         if category not in seen_in_order:
             seen_in_order.append(category)
 
+    total_occ = sum(occ for occ, _ in by_category.values())
     rows: List[str] = []
     for category in seen_in_order:
         occurrences, note_types = by_category[category]
         anchor = f"cat-{html.escape(category.lower())}"
+        share = f"{occurrences / total_occ * 100:.1f}%" if total_occ > 0 else "—"
         rows.append(
             f"<tr>"
             f'<td><a href="#{anchor}">{html.escape(_pretty_category(category))}</a></td>'
             f"<td>{_format_count(occurrences)}</td>"
+            f"<td>{share}</td>"
             f"<td>{_format_count(note_types)}</td>"
             f"</tr>"
         )
@@ -502,7 +520,7 @@ def render_category_overview(
         '<section id="categories">'
         '<h2>Findings by category</h2>'
         '<table class="data-table">'
-        "<thead><tr><th>Category</th><th>Occurrences</th>"
+        "<thead><tr><th>Category</th><th>Occurrences</th><th>%</th>"
         "<th>Note types fired</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"

@@ -134,6 +134,7 @@ def _render_note_block(
     note_data: Dict[str, Any],
     severity: str,
     field_counts: Dict[str, int],
+    distinct_sites_estimate: Optional[int] = None,
 ) -> List[str]:
     count = int(note_data.get("count", 0))
 
@@ -143,7 +144,11 @@ def _render_note_block(
     if sites_hll:
         site_est = hll_estimate(sites_hll)
         if site_est > 0:
-            heading_bits.append(f"(~{_fmt_count(site_est)} sites)")
+            if distinct_sites_estimate and distinct_sites_estimate > 0:
+                share = site_est / distinct_sites_estimate * 100
+                heading_bits.append(f"(~{_fmt_count(site_est)} sites, {share:.1f}%)")
+            else:
+                heading_bits.append(f"(~{_fmt_count(site_est)} sites)")
     lines = [" ".join(heading_bits), ""]
 
     summary_template = _NOTE_SUMMARIES.get(note_id, "")
@@ -244,28 +249,34 @@ def _render_category_overview(
     for category in by_category:
         if category not in seen_in_order:
             seen_in_order.append(category)
+    total_occ_all = sum(occ for occ, _ in by_category.values())
     lines = [
         "## Findings by category",
         "",
-        "| Category | Occurrences | Note types fired |",
-        "| --- | --- | --- |",
+        "| Category | Occurrences | % | Note types fired |",
+        "| --- | --- | --- | --- |",
     ]
     for category in seen_in_order:
         occurrences, types = by_category[category]
+        share = (
+            f"{occurrences / total_occ_all * 100:.1f}%" if total_occ_all > 0 else "—"
+        )
         lines.append(
             f"| {_pretty_category_md(category)} | {_fmt_count(occurrences)} | "
-            f"{_fmt_count(types)} |"
+            f"{share} | {_fmt_count(types)} |"
         )
     lines.append("")
     return lines
 
 
-def _render_notes_section(
+def _render_notes_section(  # pylint: disable=too-many-positional-arguments
     notes: Dict[str, Any],
     field_counts: Dict[str, int],
     severity_index: Dict[str, str],
     category_index: Dict[str, str],
     category_order: List[str],
+    total_notes: int = 0,
+    distinct_sites_estimate: Optional[int] = None,
 ) -> List[str]:
     if not notes:
         return []
@@ -294,15 +305,20 @@ def _render_notes_section(
             int(d.get("count", 0)) if isinstance(d, dict) else 0
             for _, d, _s in entries
         )
+        cat_pct = ""
+        if total_notes > 0:
+            cat_pct = f", {total_occ / total_notes * 100:.1f}% of occurrences"
         lines.append(
             f"### {_pretty_category_md(category)} "
             f"_({_fmt_count(total_occ)} occurrences, "
-            f"{_fmt_count(len(entries))} note types)_"
+            f"{_fmt_count(len(entries))} note types{cat_pct})_"
         )
         lines.append("")
         for note_id, data, severity in entries:
             lines.extend(
-                _render_note_block(note_id, data, severity, field_counts)
+                _render_note_block(
+                    note_id, data, severity, field_counts, distinct_sites_estimate
+                )
             )
     return lines
 
@@ -455,7 +471,13 @@ def render_markdown(data: Dict[str, Any]) -> str:
     )
     lines.extend(
         _render_notes_section(
-            notes, field_counts, severity_index, category_index, category_order
+            notes,
+            field_counts,
+            severity_index,
+            category_index,
+            category_order,
+            total_notes,
+            distinct_sites_estimate,
         )
     )
     lines.extend(

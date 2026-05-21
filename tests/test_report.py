@@ -131,7 +131,7 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Distinct sites analyzed", html)
         self.assertIn("HLL estimate", html)
         self.assertIn("note-sites", html)
-        self.assertIn("sites</span>", html)
+        self.assertIn("sites (40.0%)</span>", html)
 
     def test_run_context_pills_render(self) -> None:
         data = {
