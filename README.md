@@ -70,6 +70,12 @@ cluster terminated in the EMR console after a run.
    Every Make target reads `cc-lint.defaults.mk` first, then your
    `cc-lint.mk` overrides (or any `CONFIG=/path/to/another.mk`).
 
+   Edit `mrjob.conf` and `mrjob-test.conf` to replace
+   `s3://YOUR-BUCKET/cc-lint/emr-logs/` (the `cloud_log_dir` value)
+   with a writable S3 path. mrjob writes the EMR cluster logs there
+   so `make emr-timing EMR_LOG_CLUSTER_ID=j-...` has something to
+   download for postmortems.
+
 3. Build and upload the dependency wheel bundle. The bootstrap
    installs packages from `/tmp/wheels` on each EMR node with
    `--no-index`, so no PyPI traffic happens during a job:
