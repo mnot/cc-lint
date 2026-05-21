@@ -88,7 +88,7 @@ STYLE = """
   h3 { font-size: 1rem; margin-top: 1rem; }
   h4 { font-size: .9rem; font-weight: 600; margin-top: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .muted { color: var(--muted); font-size: .85em; }
-  .vars { color: var(--muted); font-size: .85em; margin-left: .25em; }
+  .vars { display: block; color: var(--muted); font-size: .85em; margin-left: 1.5em; }
 
   .hero { padding: 1rem 0 1.5rem; border-bottom: 1px solid var(--card-border); margin-bottom: 1.5rem; }
   .stat-grid {
