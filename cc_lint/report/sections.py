@@ -536,7 +536,14 @@ def render_field_counts_section(
 ) -> str:
     if not field_counts:
         return ""
-    top = sorted(field_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
+    filtered = {
+        name: count
+        for name, count in field_counts.items()
+        if not name.lower().startswith("x-crawler-")
+    }
+    if not filtered:
+        return ""
+    top = sorted(filtered.items(), key=lambda kv: kv[1], reverse=True)[:50]
     rows: List[str] = []
     for name, count in top:
         pct = (count / total_responses * 100) if total_responses else 0

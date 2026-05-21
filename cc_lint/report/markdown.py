@@ -328,13 +328,20 @@ def _render_field_counts(
 ) -> List[str]:
     if not field_counts:
         return []
+    filtered = {
+        name: count
+        for name, count in field_counts.items()
+        if not name.lower().startswith("x-crawler-")
+    }
+    if not filtered:
+        return []
     lines = ["## Top Response Headers", ""]
     if truncated:
         lines.append("_Long tail elided during shuffle; head only._")
         lines.append("")
     lines.append("| Header | Count | % of responses |")
     lines.append("| --- | --- | --- |")
-    top = sorted(field_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
+    top = sorted(filtered.items(), key=lambda kv: kv[1], reverse=True)[:50]
     for name, count in top:
         pct = (count / total_responses * 100) if total_responses else 0
         lines.append(
