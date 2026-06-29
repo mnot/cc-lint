@@ -762,11 +762,14 @@ _HEADER_BYTE_CALLOUTS = [
 ]
 
 
-def _render_header_bytes_bar_row(label: str, count: int, pct: float) -> str:
+def _render_header_bytes_bar_row(label: str, value_str: str, pct: float) -> str:
+    # ``value_str`` is the already-formatted middle-column cell: counts for the
+    # size distribution, byte sizes for the category split. The caller picks the
+    # formatter so this helper doesn't conflate "count" and "bytes" semantics.
     bar_width = int(pct * 2)  # 200px max
     return (
         f"<tr><td>{html.escape(label)}</td>"
-        f"<td>{_format_count(count)}</td>"
+        f"<td>{value_str}</td>"
         f"<td>{pct:.1f}%</td>"
         f'<td><span class="csp-bar" style="width:{bar_width}px"></span></td>'
         "</tr>"
@@ -789,7 +792,7 @@ def render_header_bytes_section(  # pylint: disable=too-many-locals
     dist_rows = [
         _render_header_bytes_bar_row(
             label,
-            header_block_hist.get(label, 0),
+            _format_count(header_block_hist.get(label, 0)),
             (header_block_hist.get(label, 0) / dist_total * 100) if dist_total else 0,
         )
         for label in BYTE_BUCKET_ORDER
@@ -803,7 +806,7 @@ def render_header_bytes_section(  # pylint: disable=too-many-locals
     cat_rows = [
         _render_header_bytes_bar_row(
             _HEADER_CATEGORY_LABELS.get(category, category),
-            byte_total,
+            _format_byte_size(byte_total),
             (byte_total / cat_total * 100) if cat_total else 0,
         )
         for category, byte_total in categories
@@ -843,13 +846,13 @@ def render_header_bytes_section(  # pylint: disable=too-many-locals
         "repeated headers heavily with HPACK/QPACK, so this overstates "
         "on-the-wire cost; it measures origin / pre-compression intent. "
         "Crawler-injected <code>x-crawler-*</code> headers are excluded.</p>",
+        f"<p>Mean header block: <strong>{_format_byte_size(int(mean_bytes))}"
+        f"</strong> per response across {_format_count(total_responses)} "
+        "responses.</p>",
     ]
 
     if dist_rows:
         parts.append(
-            f"<p>Mean header block: <strong>{_format_byte_size(int(mean_bytes))}"
-            f"</strong> per response across {_format_count(total_responses)} "
-            "responses.</p>"
             "<h3>Header-block size distribution</h3>"
             '<table class="data-table csp-table">'
             "<thead><tr><th>Header-block size</th><th>Responses</th>"
