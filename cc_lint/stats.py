@@ -1,17 +1,17 @@
-from typing import Any, Dict, Iterator, List, Optional, Set
 from collections import Counter
+from typing import Any, Dict, Iterator, List, Optional, Set
 
-from httplint.note import levels, Note
-from httplint.message import HttpResponseLinter
 from httplint.field.finder import UnknownHttpField
+from httplint.message import HttpResponseLinter
+from httplint.note import Note, levels
 
+from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.hll import (
     HLL_P_GLOBAL,
     HLL_P_PER_NOTE,
     hll_add,
     make_registers,
 )
-from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
 
@@ -62,6 +62,7 @@ def _header_value_byte_len(value: Any) -> int:
     if isinstance(value, str):
         return len(value.encode("utf-8", errors="replace"))
     return len(str(value))
+
 
 # Configuration for variable tracking
 # Map Note ID to list of variable names to track statistics for
@@ -366,7 +367,9 @@ class StatsCollector:
             return True
         return site in self.sample_sites
 
-    def _collect_samples(self, note: Note, linter: HttpResponseLinter, note_id: str) -> None:
+    def _collect_samples(
+        self, note: Note, linter: HttpResponseLinter, note_id: str
+    ) -> None:
         # Collect detailed samples, deduped by site so the cap maps to N
         # distinct sites rather than N URLs from possibly the same site.
         for var_name, val_str, sample in iter_collected_samples(note, linter):
@@ -386,7 +389,9 @@ class StatsCollector:
             if sample_site not in {s.get("site") for s in current_samples}:
                 current_samples.append(sample)
 
-    def _collect_note_sample(self, note: Note, linter: HttpResponseLinter, note_id: str) -> None:
+    def _collect_note_sample(
+        self, note: Note, linter: HttpResponseLinter, note_id: str
+    ) -> None:
         if len(self.note_data[note_id]["samples"]) >= 5:
             return
         sample = create_sample(note, linter)
@@ -399,9 +404,7 @@ class StatsCollector:
         if sample_site not in existing_sites:
             self.note_data[note_id]["samples"].append(sample)
 
-    def _process_headers(
-        self, linter: HttpResponseLinter, site: Optional[str]
-    ) -> None:
+    def _process_headers(self, linter: HttpResponseLinter, site: Optional[str]) -> None:
         # Count fields (case-insensitive); decode names if they are bytes.
         # Capture CSP byte size for the per-site histogram while we iterate.
         csp_bytes = 0

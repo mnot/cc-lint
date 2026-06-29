@@ -11,8 +11,8 @@ values, which are exactly what downstream analysis needs.
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from cc_lint.hll import hll_estimate
 from cc_lint.histograms import bucket_order
+from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import (
     build_category_index,
     build_severity_index,
@@ -241,9 +241,7 @@ def _render_note_block(
         if not counts:
             continue
         if truncated_vars.get(var_name):
-            lines.append(
-                f"_{var_name}: long tail elided during shuffle; head only._"
-            )
+            lines.append(f"_{var_name}: long tail elided during shuffle; head only._")
         largest = field_size_max if var_name == "field_name" else None
         samples = field_samples if var_name == "field_name" else None
         lines.extend(
@@ -364,9 +362,8 @@ def _render_notes_section(  # pylint: disable=too-many-positional-arguments
             ordered.append(category)
     lines = ["## Notes", ""]
     for category in ordered:
-        def _key(
-            triple: Tuple[str, Dict[str, Any], str]
-        ) -> Tuple[int, int, int, str]:
+
+        def _key(triple: Tuple[str, Dict[str, Any], str]) -> Tuple[int, int, int, str]:
             note_id, data, sev = triple
             if not isinstance(data, dict):
                 return (0, 0, 0, note_id)
@@ -381,8 +378,7 @@ def _render_notes_section(  # pylint: disable=too-many-positional-arguments
 
         entries = sorted(by_category[category], key=_key)
         total_occ = sum(
-            int(d.get("count", 0)) if isinstance(d, dict) else 0
-            for _, d, _s in entries
+            int(d.get("count", 0)) if isinstance(d, dict) else 0 for _, d, _s in entries
         )
         cat_pct = ""
         if total_notes > 0:
@@ -423,9 +419,7 @@ def _render_field_counts(
     top = sorted(filtered.items(), key=lambda kv: kv[1], reverse=True)[:50]
     for name, count in top:
         pct = (count / total_responses * 100) if total_responses else 0
-        lines.append(
-            f"| {_md_escape_pipe(name)} | {_fmt_count(count)} | {pct:.1f}% |"
-        )
+        lines.append(f"| {_md_escape_pipe(name)} | {_fmt_count(count)} | {pct:.1f}% |")
     lines.append("")
     return lines
 
@@ -510,8 +504,7 @@ def _render_unseen(
     if request_only:
         lines.append(
             f"**Request-only — unreachable for response linting "
-            f"({len(request_only)}):** "
-            + ", ".join(f"`{n}`" for n in request_only)
+            f"({len(request_only)}):** " + ", ".join(f"`{n}`" for n in request_only)
         )
         lines.append("")
     return lines
@@ -552,9 +545,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
         )
     )
     lines.extend(_render_health_section(severity_counts))
-    lines.extend(
-        _render_category_overview(notes, category_index, category_order)
-    )
+    lines.extend(_render_category_overview(notes, category_index, category_order))
     lines.extend(
         _render_notes_section(
             notes,

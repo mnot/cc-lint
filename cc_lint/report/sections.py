@@ -10,11 +10,10 @@ import html
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
-from cc_lint.hll import hll_estimate
 from cc_lint.histograms import bucket_order
+from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
-
 
 REDBOT_BASE = "https://redbot.org/check?uri="
 
@@ -72,9 +71,7 @@ def _sample_li_html(url: str, trailing_html: str) -> str:
 
 
 def _sample_li(sample: Dict[str, Any]) -> str:
-    return _sample_li_html(
-        sample.get("url", ""), _format_vars(sample.get("vars", {}))
-    )
+    return _sample_li_html(sample.get("url", ""), _format_vars(sample.get("vars", {})))
 
 
 def _field_sample_li(sample: Dict[str, Any]) -> str:
@@ -121,9 +118,7 @@ def _format_pill(label: str, value: str, modifier: str = "") -> str:
     )
 
 
-def render_run_context(
-    run_context: Dict[str, Any], finalized_at: Optional[str]
-) -> str:
+def render_run_context(run_context: Dict[str, Any], finalized_at: Optional[str]) -> str:
     pills: List[str] = []
     crawl_id = run_context.get("crawl_id") or ""
     if crawl_id:
@@ -193,18 +188,18 @@ def render_header_stats(
     sites_card = ""
     if distinct_sites_estimate is not None:
         sites_card = (
-            f'<div><dt>Distinct sites analyzed</dt><dd>~{_format_count(distinct_sites_estimate)}'
-            ' <small>HLL estimate</small></dd></div>'
+            f"<div><dt>Distinct sites analyzed</dt><dd>~{_format_count(distinct_sites_estimate)}"
+            " <small>HLL estimate</small></dd></div>"
         )
     return (
         '<header class="hero">'
-        '<h1>Common Crawl Response Lint</h1>'
+        "<h1>Common Crawl Response Lint</h1>"
         '<dl class="stat-grid">'
-        f'<div><dt>Responses analyzed</dt><dd>{_format_count(total_responses)}</dd></div>'
-        f'{sites_card}'
-        f'<div><dt>Note occurrences</dt><dd>{_format_count(total_notes)}'
-        ' <small>across all responses</small></dd></div>'
-        f'<div><dt>Distinct note types seen</dt><dd>{_format_count(seen_count)}</dd></div>'
+        f"<div><dt>Responses analyzed</dt><dd>{_format_count(total_responses)}</dd></div>"
+        f"{sites_card}"
+        f"<div><dt>Note occurrences</dt><dd>{_format_count(total_notes)}"
+        " <small>across all responses</small></dd></div>"
+        f"<div><dt>Distinct note types seen</dt><dd>{_format_count(seen_count)}</dd></div>"
         "</dl>"
         "</header>"
     )
@@ -229,20 +224,20 @@ def _render_field_error_block(counts: Dict[str, int]) -> str:
         error_items: List[str] = []
         for err, count in errors:
             error_items.append(
-                f"<li><span class=\"err\">{html.escape(err)}</span> "
-                f"<span class=\"muted\">({_format_count(count)})</span></li>"
+                f'<li><span class="err">{html.escape(err)}</span> '
+                f'<span class="muted">({_format_count(count)})</span></li>'
             )
         rows.append(
             "<tr>"
-            f"<th scope=\"row\">{html.escape(field)}"
-            f"<br><span class=\"muted\">{_format_count(total)}</span></th>"
+            f'<th scope="row">{html.escape(field)}'
+            f'<br><span class="muted">{_format_count(total)}</span></th>'
             f"<td><ul class=\"errors\">{''.join(error_items)}</ul></td>"
             "</tr>"
         )
     overflow = ""
     if len(sorted_fields) > 50:
         overflow = (
-            f"<tr><td colspan=\"2\" class=\"muted\">"
+            f'<tr><td colspan="2" class="muted">'
             f"… {len(sorted_fields) - 50} more fields not shown …</td></tr>"
         )
     return (
@@ -327,12 +322,12 @@ def _render_var_block(
 
     if len(sorted_vals) > 25:
         rows.append(
-            f"<tr><td colspan=\"{len(head_cells)}\" class=\"muted\">"
+            f'<tr><td colspan="{len(head_cells)}" class="muted">'
             f"… {len(sorted_vals) - 25} more values not shown …</td></tr>"
         )
 
     return (
-        f'<h4>{html.escape(_var_heading(var_name))}</h4>'
+        f"<h4>{html.escape(_var_heading(var_name))}</h4>"
         f'<table class="var-table">'
         f"<thead><tr>{header}</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
@@ -389,17 +384,15 @@ def _render_note_card(
     summary_template = _NOTE_SUMMARIES.get(note_id, "")
     summary_html = ""
     if summary_template:
-        summary_html = (
-            f'<p class="note-summary">{html.escape(summary_template)}</p>'
-        )
+        summary_html = f'<p class="note-summary">{html.escape(summary_template)}</p>'
 
     sample_html = ""
     if samples:
         items = "".join(_sample_li(s) for s in samples)
         sample_html = (
-            "<details class=\"note-samples\">"
+            '<details class="note-samples">'
             f"<summary>Samples ({_format_count(len(samples))})</summary>"
-            f"<ul class=\"samples\">{items}</ul>"
+            f'<ul class="samples">{items}</ul>'
             "</details>"
         )
 
@@ -427,12 +420,12 @@ def _render_note_card(
             )
     return (
         f'<details class="note severity-{severity}"{open_attr}>'
-        f'<summary>'
+        f"<summary>"
         f'<span class="badge badge-{severity}">{severity.upper()}</span>'
         f'<span class="note-id">{html.escape(note_id)}</span>'
-        f'{sites_pill}'
+        f"{sites_pill}"
         f'<span class="note-count" title="{html.escape(count_title)}">'
-        f'{_format_count(count)}</span>'
+        f"{_format_count(count)}</span>"
         "</summary>"
         f'<div class="note-body">{summary_html}{sample_html}{var_html}</div>'
         "</details>"
@@ -442,9 +435,7 @@ def _render_note_card(
 _SEVERITY_ORDER = {"bad": 4, "warn": 3, "info": 2, "good": 1}
 
 
-def _note_sort_key(
-    item: Tuple[str, Dict[str, Any]]
-) -> Tuple[int, int, int, str]:
+def _note_sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[int, int, int, str]:
     """Sort within a category: severity desc, then site cardinality desc,
     then occurrence count desc, then id asc.
     Notes seen on more sites surface above notes with many occurrences from a
@@ -498,8 +489,7 @@ def render_notes_section(  # pylint: disable=too-many-positional-arguments
     for category in ordered_categories:
         entries = sorted(by_category[category], key=_note_sort_key)
         total_occ = sum(
-            int(d.get("count", 0)) if isinstance(d, dict) else 0
-            for _, d in entries
+            int(d.get("count", 0)) if isinstance(d, dict) else 0 for _, d in entries
         )
         cards = [
             _render_note_card(
@@ -516,19 +506,14 @@ def render_notes_section(  # pylint: disable=too-many-positional-arguments
             cat_pct = f" ({total_occ / total_notes * 100:.1f}% of occurrences)"
         sections.append(
             f'<section class="note-category" id="cat-{html.escape(category.lower())}">'
-            f'<h3>{html.escape(_pretty_category(category))} '
+            f"<h3>{html.escape(_pretty_category(category))} "
             f'<span class="cat-totals">{_format_count(total_occ)} occurrences '
-            f'across {_format_count(len(entries))} note types{cat_pct}</span></h3>'
+            f"across {_format_count(len(entries))} note types{cat_pct}</span></h3>"
             f'<div class="note-list">{"".join(cards)}</div>'
             "</section>"
         )
 
-    return (
-        '<section id="notes">'
-        '<h2>Notes</h2>'
-        f'{"".join(sections)}'
-        "</section>"
-    )
+    return '<section id="notes">' "<h2>Notes</h2>" f'{"".join(sections)}' "</section>"
 
 
 _CATEGORY_LABELS = {
@@ -588,7 +573,7 @@ def render_health_summary(severity_counts: Dict[str, int]) -> str:
         )
     return (
         '<section id="health">'
-        '<h2>Response health</h2>'
+        "<h2>Response health</h2>"
         '<p class="muted">Each response is bucketed by the most severe '
         "httplint finding it produced. <em>Clean</em> means httplint found "
         "nothing worth reporting on that response. Per-response, not "
@@ -639,7 +624,7 @@ def render_category_overview(
         )
     return (
         '<section id="categories">'
-        '<h2>Findings by category</h2>'
+        "<h2>Findings by category</h2>"
         '<table class="data-table">'
         "<thead><tr><th>Category</th><th>Occurrences</th><th>%</th>"
         "<th>Note types fired</th></tr></thead>"
@@ -675,7 +660,7 @@ def render_field_counts_section(
         )
     return (
         '<section id="headers">'
-        '<h2>Top Response Headers</h2>'
+        "<h2>Top Response Headers</h2>"
         '<p class="muted">Most common response header names, with the share of '
         "responses that included at least one instance.</p>"
         f"{TRUNCATED_NOTE if truncated else ''}"
@@ -731,7 +716,7 @@ def render_csp_section(csp_sizes: Dict[str, int]) -> str:
         )
     return (
         '<section id="csp">'
-        '<h2>Content-Security-Policy size by site</h2>'
+        "<h2>Content-Security-Policy size by site</h2>"
         '<p class="muted">Distribution of the maximum CSP header byte size '
         "each site served, across all responses analyzed. A site appears in "
         "exactly one bucket -- the largest CSP it ever returned, regardless "
@@ -758,7 +743,7 @@ def render_unprocessed_section(
     )
     return (
         '<section id="unprocessed">'
-        '<h2>Top Unsupported Headers</h2>'
+        "<h2>Top Unsupported Headers</h2>"
         '<p class="muted">Header names httplint did not recognise, ranked by occurrence.</p>'
         f"{TRUNCATED_NOTE if truncated else ''}"
         '<table class="data-table">'
@@ -777,8 +762,8 @@ def _render_unseen_subblock(title: str, body: str, notes: List[str]) -> str:
         return ""
     items = "".join(f"<li>{html.escape(n)}</li>" for n in notes)
     return (
-        '<details>'
-        f'<summary><h3>{html.escape(title)} ({len(notes)})</h3></summary>'
+        "<details>"
+        f"<summary><h3>{html.escape(title)} ({len(notes)})</h3></summary>"
         f'<p class="muted">{body}</p>'
         f'<ul class="missing-list">{items}</ul>'
         "</details>"
@@ -816,7 +801,7 @@ def render_missing_section(
     ]
     return (
         '<section id="missing">'
-        '<h2>Unseen note types</h2>'
+        "<h2>Unseen note types</h2>"
         f'{"".join(blocks)}'
         "</section>"
     )

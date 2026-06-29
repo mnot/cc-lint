@@ -15,7 +15,8 @@ import sys
 import tempfile
 import time
 import traceback
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from multiprocessing import get_context
 from typing import Any, Dict, Generator, Iterator, List, Optional, Set, Tuple
 
@@ -24,8 +25,8 @@ from cc_lint.emr.compat import install_mrjob_pipes_compat
 install_mrjob_pipes_compat()
 
 # pylint: disable=wrong-import-position,wrong-import-order,ungrouped-imports
-from mrjob.job import MRJob
-from mrjob.protocol import JSONProtocol
+from mrjob.job import MRJob  # type: ignore[import-untyped]
+from mrjob.protocol import JSONProtocol  # type: ignore[import-untyped]
 
 import cc_lint
 from cc_lint.emr.warc_worker import (
@@ -34,7 +35,7 @@ from cc_lint.emr.warc_worker import (
     process_warc_to_file,
 )
 from cc_lint.hll import hll_merge
-from cc_lint.stats import StatsCollector, VAR_SAMPLE_LIMIT
+from cc_lint.stats import VAR_SAMPLE_LIMIT, StatsCollector
 from cc_lint.top_sites import load_top_sites
 
 
@@ -180,9 +181,7 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_counts(target["severity_counts"], source.get("severity_counts", {}))
     target.setdefault("notes", {})
     for note_id, note in source.get("notes", {}).items():
-        target["notes"].setdefault(
-            note_id, {"count": 0, "samples": [], "vars": {}}
-        )
+        target["notes"].setdefault(note_id, {"count": 0, "samples": [], "vars": {}})
         merge_note(target["notes"][note_id], note)
     src_hll = source.get("sites_hll")
     if src_hll:
@@ -470,14 +469,10 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         self.warcs_seen += 1
 
         try:
-            sys.stderr.write(
-                f"INFO: starting WARC {self.warcs_seen}: {raw_path}\n"
-            )
+            sys.stderr.write(f"INFO: starting WARC {self.warcs_seen}: {raw_path}\n")
             sys.stderr.flush()
             if self.warcs_seen == 1 and self._s3_jitter > 0:
-                sys.stderr.write(
-                    f"INFO: jitter sleep {self._s3_jitter:.1f}s\n"
-                )
+                sys.stderr.write(f"INFO: jitter sleep {self._s3_jitter:.1f}s\n")
                 sys.stderr.flush()
                 time.sleep(self._s3_jitter)
                 self.increment_counter(
@@ -540,12 +535,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                     self.increment_counter("status", "warcs_failed", 1)
                     self.increment_counter("status", "warc_timed_out", 1)
                     return None
-                self.set_status(
-                    f"Downloading WARC {self.warcs_seen}: {raw_path}"
-                )
+                self.set_status(f"Downloading WARC {self.warcs_seen}: {raw_path}")
                 sys.stderr.write(
-                    f"INFO: still downloading WARC {self.warcs_seen}: "
-                    f"{raw_path}\n"
+                    f"INFO: still downloading WARC {self.warcs_seen}: " f"{raw_path}\n"
                 )
                 sys.stderr.flush()
 
@@ -571,9 +563,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         self.increment_counter("status", "records_processed", result.records_seen)
         self.increment_counter("timing", "warc_total_ms", result.total_ms)
         self.increment_counter("timing", "record_process_ms", result.process_ms)
-        self.increment_counter(
-            "timing", "iterator_download_ms", result.iterator_ms
-        )
+        self.increment_counter("timing", "iterator_download_ms", result.iterator_ms)
         self.increment_counter("timing", "warcs_completed", 1)
         self.increment_counter("timing", "records_seen", result.records_seen)
 
@@ -585,9 +575,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             self._running_dict: Dict[str, Any] = self.stats.to_dict()
         return self._running_dict
 
-    def _record_warc_failure(
-        self, raw_path: str, exit_code: Optional[int]
-    ) -> None:
+    def _record_warc_failure(self, raw_path: str, exit_code: Optional[int]) -> None:
         exit_label = "unknown" if exit_code is None else str(exit_code)
         signal_label = ""
         bucket = _failure_bucket(exit_code)
