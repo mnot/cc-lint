@@ -6,10 +6,15 @@ through :func:`html.escape`; the only literal HTML in these strings is the
 fixed page structure.
 """
 
+# pylint: disable=too-many-lines
+# A flat collection of independent section renderers; splitting it would only
+# scatter closely-related report code across modules without reducing coupling.
+
 import html
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
+from cc_lint.fingerprint import UNMATCHED
 from cc_lint.histograms import bucket_order
 from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import build_summary_index
@@ -381,6 +386,38 @@ def _render_variable_stats(
     return f'<div class="var-stats">{"".join(blocks)}</div>'
 
 
+def _render_note_layers(by_layer: Dict[str, int], note_count: int) -> str:
+    """Compact per-note infrastructure breakdown (issue #4).
+
+    Shows the share of this note's occurrences seen on each fingerprint
+    layer. Layers overlap (a response can be cloudflare + nginx + nextjs),
+    so the shares need not sum to 100%.
+    """
+    if not by_layer:
+        return ""
+    ordered = sorted(by_layer.items(), key=lambda kv: kv[1], reverse=True)
+    rows: List[str] = []
+    for layer, fired in ordered[:10]:
+        share = f"{fired / note_count * 100:.1f}%" if note_count else "—"
+        rows.append(
+            f"<tr><td>{html.escape(layer)}</td>"
+            f"<td>{_format_count(fired)}</td><td>{share}</td></tr>"
+        )
+    if len(ordered) > 10:
+        rows.append(
+            f'<tr><td colspan="3" class="muted">… {len(ordered) - 10} more '
+            "layers not shown …</td></tr>"
+        )
+    return (
+        '<div class="note-layers"><h4 title="Layers overlap; a response can '
+        'match several, so shares need not sum to 100%.">By infrastructure</h4>'
+        '<table class="var-table">'
+        "<thead><tr><th>Layer</th><th>Note fires</th>"
+        "<th>Share of occurrences</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 def _render_note_card(
     note_id: str,
     note_data: Dict[str, Any],
@@ -407,6 +444,7 @@ def _render_note_card(
         )
 
     var_html = _render_variable_stats(note_data, field_counts)
+    layers_html = _render_note_layers(note_data.get("by_layer") or {}, count)
 
     open_attr = " open" if count > 0 else ""
     count_title = (
@@ -437,7 +475,8 @@ def _render_note_card(
         f'<span class="note-count" title="{html.escape(count_title)}">'
         f"{_format_count(count)}</span>"
         "</summary>"
-        f'<div class="note-body">{summary_html}{sample_html}{var_html}</div>'
+        f'<div class="note-body">{summary_html}{sample_html}{var_html}'
+        f'{layers_html}</div>'
         "</details>"
     )
 
@@ -737,6 +776,162 @@ def render_csp_section(csp_sizes: Dict[str, int]) -> str:
         "<th></th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
+        "</section>"
+    )
+
+
+def _render_field_by_layer(
+    field_counts_by_layer: Dict[str, Dict[str, int]],
+    field_counts: Dict[str, int],
+    truncated: bool,
+) -> str:
+    """Per-header infrastructure distribution (issue #4).
+
+    Answers "which infrastructure emits header H" for the highest-volume
+    headers. Shares are relative to each header's total occurrences; layers
+    overlap, so a single occurrence can count under several and the per-header
+    shares need not sum to 100%.
+    """
+    if not field_counts_by_layer:
+        return ""
+    ranked = sorted(
+        field_counts_by_layer.items(),
+        key=lambda kv: sum(kv[1].values()),
+        reverse=True,
+    )
+    rows: List[str] = []
+    for name, layers in ranked[:25]:
+        if name.lower().startswith("x-crawler-"):
+            continue
+        total = field_counts.get(name.lower(), sum(layers.values()))
+        layer_bits: List[str] = []
+        for layer, count in sorted(
+            layers.items(), key=lambda kv: kv[1], reverse=True
+        )[:6]:
+            share = f"{count / total * 100:.0f}%" if total else "—"
+            layer_bits.append(
+                f'<span class="layer-chip">{html.escape(layer)} '
+                f'<span class="muted">{share}</span></span>'
+            )
+        rows.append(
+            "<tr>"
+            f'<th scope="row">{html.escape(name)}</th>'
+            f"<td>{' '.join(layer_bits)}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return ""
+    return (
+        "<h3>Headers by infrastructure</h3>"
+        '<p class="muted">For the highest-volume response headers, the share '
+        "of each header's occurrences seen on each fingerprint layer. Layers "
+        "overlap, so shares need not sum to 100%.</p>"
+        f"{TRUNCATED_NOTE if truncated else ''}"
+        '<table class="data-table">'
+        "<thead><tr><th>Header</th><th>Layers (share of occurrences)</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def render_infrastructure_section(  # pylint: disable=too-many-positional-arguments
+    layer_counts: Dict[str, int],
+    field_counts_by_layer: Dict[str, Dict[str, int]],
+    field_counts: Dict[str, int],
+    total_responses: int,
+    roles: Dict[str, str],
+    truncated_fcbl: bool,
+) -> str:
+    """Infrastructure fingerprint overview (issue #4).
+
+    A per-layer response table plus a fingerprint-coverage line, followed by
+    the per-header layer breakdown. Layers are best-effort and overlap.
+    """
+    if not layer_counts:
+        return ""
+    unmatched = int(layer_counts.get(UNMATCHED, 0))
+    matched = {k: int(v) for k, v in layer_counts.items() if k != UNMATCHED}
+    fingerprinted = max(0, total_responses - unmatched)
+    coverage = (fingerprinted / total_responses * 100) if total_responses else 0
+
+    rows: List[str] = []
+    for layer, count in sorted(matched.items(), key=lambda kv: kv[1], reverse=True):
+        role = roles.get(layer, "")
+        pct = (count / total_responses * 100) if total_responses else 0
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(layer)}</td>"
+            f"<td>{html.escape(role)}</td>"
+            f"<td>{_format_count(count)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            "</tr>"
+        )
+    table = ""
+    if rows:
+        table = (
+            '<table class="data-table">'
+            "<thead><tr><th>Layer</th><th>Role</th><th>Responses</th>"
+            "<th>% of responses</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+        )
+    fcbl_html = _render_field_by_layer(
+        field_counts_by_layer, field_counts, truncated_fcbl
+    )
+    return (
+        '<section id="infrastructure">'
+        "<h2>Infrastructure</h2>"
+        '<p class="muted">Best-effort fingerprint of the CDN / server / '
+        "framework / platform behind each response, from signal headers. A "
+        "response can match several layers (a stack), so the counts below "
+        "overlap and need not sum to the response total. "
+        f"Fingerprinted {coverage:.1f}% of responses; "
+        f"{_format_count(unmatched)} matched no known layer.</p>"
+        f"{table}{fcbl_html}"
+        "</section>"
+    )
+
+
+def render_asn_section(
+    asn_counts: Dict[str, int],
+    total_responses: int,
+    asn_to_layer: Dict[int, str],
+    truncated: bool,
+) -> str:
+    """Top networks (ASN) by response count (issue #4).
+
+    Surfaces the big networks the crawler connected to, including ones not yet
+    in the fingerprint table -- a discovery aid for tuning the table. Known
+    ASNs are annotated with the layer they map to.
+    """
+    if not asn_counts:
+        return ""
+    ranked = sorted(asn_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
+    rows: List[str] = []
+    for asn_str, count in ranked:
+        try:
+            label = asn_to_layer.get(int(asn_str), "")
+        except ValueError:
+            label = ""
+        pct = (count / total_responses * 100) if total_responses else 0
+        rows.append(
+            "<tr>"
+            f"<td>AS{html.escape(asn_str)}</td>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{_format_count(count)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            "</tr>"
+        )
+    return (
+        '<section id="asn">'
+        "<h2>Top networks (ASN)</h2>"
+        '<p class="muted">Autonomous System the crawl-time IP resolved to, by '
+        "response count. Reflects the outermost network the crawler reached "
+        "(a fronting CDN, or the origin's host). Networks without a layer "
+        "label are not yet in the fingerprint table.</p>"
+        f"{TRUNCATED_NOTE if truncated else ''}"
+        '<table class="data-table">'
+        "<thead><tr><th>ASN</th><th>Layer</th><th>Responses</th>"
+        "<th>% of responses</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
     )
 

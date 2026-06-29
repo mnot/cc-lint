@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Set, cast
 
 from cc_lint.emr.warc_source import create_s3_client, iter_wat_records
+from cc_lint.ipasn import IpAsnTable
 from cc_lint.linting import lint_record
 from cc_lint.stats import StatsCollector
 from cc_lint.top_sites import is_in_top_sites
@@ -32,12 +33,13 @@ class WarcWorkerResult:
     iterator_ms: int
 
 
-def process_warc_to_file(
+def process_warc_to_file(  # pylint: disable=too-many-positional-arguments
     raw_path: str,
     result_path: str,
     record_limit: int,
     top_sites: Optional[Set[str]],
     sample_sites: Optional[Set[str]] = None,
+    ipasn: Optional[IpAsnTable] = None,
 ) -> None:
     """Process one WAT file and write the result to ``result_path``.
 
@@ -52,7 +54,7 @@ def process_warc_to_file(
     traceback is logged so the parent observes a non-zero exit code.
     """
     worker_start = time.perf_counter()
-    stats = StatsCollector(sample_sites=sample_sites)
+    stats = StatsCollector(sample_sites=sample_sites, ipasn=ipasn)
     s3_client: Any = create_s3_client()
     records_seen = 0
     processing_time = 0.0

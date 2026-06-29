@@ -35,6 +35,7 @@ from cc_lint.emr.warc_worker import (
     process_warc_to_file,
 )
 from cc_lint.hll import hll_merge
+from cc_lint.ipasn import IpAsnTable, load_ipasn
 from cc_lint.stats import VAR_SAMPLE_LIMIT, StatsCollector
 from cc_lint.top_sites import load_top_sites
 from cc_lint.vary import merge_vary, trim_vary
@@ -58,6 +59,7 @@ def _build_run_context(options: Any) -> Dict[str, Any]:
         "warc_timeout_s": int(getattr(options, "warc_timeout", 0)),
         "cc_lint_version": cc_lint.__version__,
         "httplint_version": _httplint_version(),
+        "ipasn_enabled": bool(getattr(options, "ipasn_path", None)),
     }
 
 
@@ -72,6 +74,7 @@ SAMPLE_LIMIT = 5
 # the shuffle and final report size.
 TOP_K_VAR_VALUES = 2000  # entries kept per vars[var_name] counts dict
 TOP_K_FIELD_COUNTS = 5000  # entries kept in field_counts / unprocessed_counts
+TOP_K_ASN = 5000  # entries kept in asn_counts (top networks by response count)
 TOP_K_RECIPES = 2000  # entries kept per Vary recipe / marginal dict
 
 
@@ -86,6 +89,27 @@ def _merge_nested_counts(
     for var_name, counts in source.items():
         target.setdefault(var_name, {})
         _merge_counts(target[var_name], counts)
+
+
+def _merge_layer_stats(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    """Merge the infrastructure-fingerprint stats (issue #4).
+
+    ``layer_counts`` is a flat layer -> response-count map (with an UNMATCHED
+    bucket); ``field_counts_by_layer`` is field -> layer -> occurrence-count.
+    Both appear in the per-mapper stats dict and in the emitted globals
+    payload, so this is shared by merge_stats_dict and merge_globals.
+    """
+    src_layer = source.get("layer_counts")
+    if src_layer:
+        _merge_counts(target.setdefault("layer_counts", {}), src_layer)
+    src_fcbl = source.get("field_counts_by_layer")
+    if src_fcbl:
+        _merge_nested_counts(
+            target.setdefault("field_counts_by_layer", {}), src_fcbl
+        )
+    src_asn = source.get("asn_counts")
+    if src_asn:
+        _merge_counts(target.setdefault("asn_counts", {}), src_asn)
 
 
 def sample_key(sample: Dict[str, Any]) -> str:
@@ -150,6 +174,9 @@ def merge_note(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     src_maxes = source.get("numeric_maxes")
     if src_maxes:
         _merge_numeric_maxes(target.setdefault("numeric_maxes", {}), src_maxes)
+    src_by_layer = source.get("by_layer")
+    if src_by_layer:
+        _merge_counts(target.setdefault("by_layer", {}), src_by_layer)
 
 
 def _merge_numeric_maxes(
@@ -181,6 +208,7 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_counts(target["unprocessed_counts"], source.get("unprocessed_counts", {}))
     target.setdefault("severity_counts", {})
     _merge_counts(target["severity_counts"], source.get("severity_counts", {}))
+    _merge_layer_stats(target, source)
     target.setdefault("notes", {})
     for note_id, note in source.get("notes", {}).items():
         target["notes"].setdefault(note_id, {"count": 0, "samples": [], "vars": {}})
@@ -248,7 +276,13 @@ def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_counts(target["unprocessed_counts"], source.get("unprocessed_counts", {}))
     target.setdefault("severity_counts", {})
     _merge_counts(target["severity_counts"], source.get("severity_counts", {}))
-    for flag in ("truncated_field_counts", "truncated_unprocessed_counts"):
+    _merge_layer_stats(target, source)
+    for flag in (
+        "truncated_field_counts",
+        "truncated_unprocessed_counts",
+        "truncated_field_counts_by_layer",
+        "truncated_asn_counts",
+    ):
         if source.get(flag):
             target[flag] = True
     src_hll = source.get("sites_hll")
@@ -346,6 +380,21 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
         )
         if was_trunc:
             stats["truncated_unprocessed_counts"] = True
+    if "field_counts_by_layer" in stats:
+        # Outer keys (header names) share field_counts' long tail; cap them to
+        # the same top-K by per-field total. The inner per-layer dicts are
+        # bounded by the fingerprint table size, so they need no trimming.
+        fcbl = stats["field_counts_by_layer"]
+        if len(fcbl) > TOP_K_FIELD_COUNTS:
+            ranked = sorted(
+                fcbl.items(), key=lambda kv: sum(kv[1].values()), reverse=True
+            )[:TOP_K_FIELD_COUNTS]
+            stats["field_counts_by_layer"] = dict(ranked)
+            stats["truncated_field_counts_by_layer"] = True
+    if "asn_counts" in stats:
+        stats["asn_counts"], was_trunc = _trim_counts(stats["asn_counts"], TOP_K_ASN)
+        if was_trunc:
+            stats["truncated_asn_counts"] = True
     if stats.get("vary"):
         trim_vary(stats["vary"], TOP_K_RECIPES)
     for note in stats.get("notes", {}).values():
@@ -412,6 +461,15 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             help="Path to the Tranco top-sites CSV (sent to mappers via --files)",
         )
         self.add_passthru_arg(
+            "--ipasn-path",
+            default=None,
+            help=(
+                "Path to a CAIDA pfx2as IP->ASN table (sent to mappers via "
+                "--files) for ASN-based infrastructure fingerprinting. When "
+                "unset, fingerprinting is header-only."
+            ),
+        )
+        self.add_passthru_arg(
             "--crawl-id",
             default="",
             help="Common Crawl release id (e.g. CC-MAIN-2026-12) recorded in the report",
@@ -448,6 +506,15 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                     self.sample_sites = load_top_sites(
                         self.options.tranco_path, sample_limit
                     )
+            self.ipasn: Optional[IpAsnTable] = None
+            if self.options.ipasn_path:
+                load_start = time.perf_counter()
+                self.ipasn = load_ipasn(self.options.ipasn_path)
+                self.increment_counter(
+                    "timing",
+                    "ipasn_load_ms",
+                    int((time.perf_counter() - load_start) * 1000),
+                )
             self.run_context = _build_run_context(self.options)
             self.warcs_seen = 0
             # Random per-mapper sleep applied before the first S3 download
@@ -520,6 +587,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                     self.options.record_limit,
                     self.top_sites,
                     self.sample_sites,
+                    self.ipasn,
                 ),
             )
             process.start()
@@ -610,7 +678,18 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         }
         if stats.get("sites_hll"):
             globals_payload["sites_hll"] = stats["sites_hll"]
-        for flag in ("truncated_field_counts", "truncated_unprocessed_counts"):
+        if stats.get("layer_counts"):
+            globals_payload["layer_counts"] = stats["layer_counts"]
+        if stats.get("field_counts_by_layer"):
+            globals_payload["field_counts_by_layer"] = stats["field_counts_by_layer"]
+        if stats.get("asn_counts"):
+            globals_payload["asn_counts"] = stats["asn_counts"]
+        for flag in (
+            "truncated_field_counts",
+            "truncated_unprocessed_counts",
+            "truncated_field_counts_by_layer",
+            "truncated_asn_counts",
+        ):
             if stats.get(flag):
                 globals_payload[flag] = True
         yield GLOBALS_KEY, globals_payload

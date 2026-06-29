@@ -1,0 +1,115 @@
+# Infrastructure fingerprint table for cc-lint (issue #4).
+#
+# A response matches a layer if ANY of its `signals` match, OR its
+# crawl-time IP (WARC-IP-Address) resolves to an ASN listed in `asns`.
+# A response may match several layers at once (a stack), e.g. cloudflare
+# (cdn) + nginx (server) + nextjs (framework).
+#
+# Signal forms (header-name lookups are case-insensitive):
+#   { header = "x" }                  -> header x present (any value)
+#   { header = "x", contains = "y" }  -> some value of x contains y (case-insensitive)
+#   { header = "x", regex = "y" }     -> some value of x matches regex y (re.search, IGNORECASE)
+#
+# role: cdn | server | framework | platform | mesh
+#
+# Signal strength is uneven and this is best-effort by design: presence of a
+# vendor-namespaced header (cf-ray, x-amz-cf-id, x-vercel-id, ...) is strong;
+# Server / X-Powered-By value matches are operator-settable and weaker. Tune
+# this table from real data rather than treating any match as authoritative.
+
+[[layer]]
+id = "cloudflare"
+role = "cdn"
+asns = [13335]
+signals = [
+  { header = "cf-ray" },
+  { header = "cf-cache-status" },
+  { header = "server", contains = "cloudflare" },
+]
+
+[[layer]]
+id = "cloudfront"
+role = "cdn"
+signals = [
+  { header = "x-amz-cf-id" },
+  { header = "x-amz-cf-pop" },
+  { header = "via", contains = "cloudfront" },
+]
+
+[[layer]]
+id = "fastly"
+role = "cdn"
+asns = [54113]
+# x-served-by / x-timer are Varnish-family and not strictly Fastly-exclusive
+# (self-hosted Varnish emits them too); treated as best-effort. See issue #4.
+signals = [
+  { header = "x-served-by" },
+  { header = "x-timer" },
+  { header = "surrogate-key" },
+  { header = "via", contains = "fastly" },
+]
+
+[[layer]]
+id = "akamai"
+role = "cdn"
+# Akamai-specific ASNs. (CloudFront/Vercel/Azure are deliberately left
+# header-only: their ASNs are shared general-purpose AWS/Microsoft networks,
+# so matching by ASN would conflate plain hosting with the CDN/edge.)
+asns = [20940, 16625, 32787, 21342]
+signals = [
+  { header = "akamai-grn" },
+  { header = "x-akamai-transformed" },
+  { header = "server", contains = "akamaighost" },
+  { header = "server-timing", regex = "\\bak_p\\b" },
+]
+
+[[layer]]
+id = "vercel"
+role = "platform"
+signals = [
+  { header = "x-vercel-id" },
+  { header = "x-vercel-cache" },
+]
+
+[[layer]]
+id = "azure-front-door"
+role = "cdn"
+signals = [
+  { header = "x-azure-ref" },
+]
+
+[[layer]]
+id = "envoy"
+role = "mesh"
+signals = [
+  { header = "x-envoy-upstream-service-time" },
+]
+
+[[layer]]
+id = "nginx"
+role = "server"
+signals = [
+  { header = "server", contains = "nginx" },
+]
+
+[[layer]]
+id = "apache"
+role = "server"
+signals = [
+  { header = "server", contains = "apache" },
+]
+
+[[layer]]
+id = "nextjs"
+role = "framework"
+signals = [
+  { header = "x-powered-by", contains = "next.js" },
+  { header = "x-nextjs-cache" },
+]
+
+[[layer]]
+id = "nuxt"
+role = "framework"
+signals = [
+  { header = "x-powered-by", contains = "nuxt" },
+]

@@ -24,6 +24,7 @@ help:
 	@echo "  make emr           Run the full EMR analysis"
 	@echo "  make report RESULTS_DIR=results/...  Re-render saved EMR reports"
 	@echo "  make tranco-cache  Ensure the Tranco top-sites CSV is downloaded"
+	@echo "  make ipasn-cache   Build the IP->ASN table for ASN fingerprinting"
 	@echo "  make wheels        Build EMR dependency wheels"
 	@echo "  make upload-wheels Build and upload EMR dependency wheels"
 	@echo "  make emr-timing EMR_LOG_CLUSTER_ID=j-...  Summarize preserved EMR timing logs"
@@ -65,9 +66,13 @@ check-s3-config:
 paths.txt:
 	curl -sSf https://data.commoncrawl.org/crawl-data/$(LOCAL_CRAWL_ID)/warc.paths.gz | gunzip > $@
 
+# Pass the IP->ASN table through when it has been built (make ipasn-cache);
+# otherwise local fingerprinting is header-only.
+LOCAL_IPASN_ARG = $(if $(wildcard $(IPASN_CACHE)),--ipasn-path $(IPASN_CACHE),)
+
 .PHONY: report.html
 report.html: paths.txt
-	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt --top-sites $(LOCAL_TOP_N) --output $@
+	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt --top-sites $(LOCAL_TOP_N) $(LOCAL_IPASN_ARG) --output $@
 
 .PHONY: test
 test: test_py
@@ -101,10 +106,17 @@ MRJOB_BOOTSTRAP_ARGS = \
 	--bootstrap "aws s3 sync $(WHEEL_S3_PATH) /tmp/wheels/" \
 	--bootstrap "$(MRJOB_BOOTSTRAP_PIP_INSTALL)"
 
+# ASN args wire in automatically once $(IPASN_CACHE) exists (build it with
+# `make ipasn-cache`); otherwise this is empty and fingerprinting stays
+# header-only, so existing runs are unaffected.
+IPASN_ARGS = $(if $(wildcard $(IPASN_CACHE)),--files "$(IPASN_CACHE)\#ipasn.tsv" --ipasn-path ipasn.tsv,)
+
 MRJOB_COMMON_ARGS = \
 	-r emr \
 	$(MRJOB_BOOTSTRAP_ARGS) \
 	--files "$(TRANCO_CACHE)\#top-1m-sites.csv" \
+	--files "cc_lint/fingerprints.toml\#fingerprints.toml" \
+	$(IPASN_ARGS) \
 	--cleanup $(MRJOB_CLEANUP) \
 	--no-read-logs --no-cat-output \
 	--tranco-path top-1m-sites.csv
@@ -114,6 +126,19 @@ RESULTS_DIR ?=
 .PHONY: tranco-cache
 tranco-cache: venv
 	$(VENV)/python -c "from cc_lint.top_sites import get_top_sites_path; get_top_sites_path('$(TRANCO_CACHE_DIR)')"
+
+# Build the IP->ASN table from CAIDA pfx2as snapshots. Requires IPASN_V4_URL
+# (and optionally IPASN_V6_URL) to be set in your config; see
+# cc-lint.defaults.mk for where to find the snapshot URLs. Concatenates the
+# IPv4 and IPv6 tables into one TSV that the EMR job and local lint consume.
+.PHONY: ipasn-cache
+ipasn-cache:
+	@test -n "$(IPASN_V4_URL)" || (echo "Set IPASN_V4_URL (and optionally IPASN_V6_URL) to a CAIDA pfx2as snapshot URL; see cc-lint.defaults.mk" && exit 1)
+	mkdir -p $(IPASN_CACHE_DIR)
+	curl -fsSL "$(IPASN_V4_URL)" | gunzip > $(IPASN_CACHE).tmp
+	@if [ -n "$(IPASN_V6_URL)" ]; then curl -fsSL "$(IPASN_V6_URL)" | gunzip >> $(IPASN_CACHE).tmp; fi
+	mv $(IPASN_CACHE).tmp $(IPASN_CACHE)
+	@echo "Wrote $(IPASN_CACHE)"
 
 .PHONY: wheels
 wheels:

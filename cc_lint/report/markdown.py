@@ -11,6 +11,7 @@ values, which are exactly what downstream analysis needs.
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
 from cc_lint.histograms import bucket_order
 from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import (
@@ -257,6 +258,16 @@ def _render_note_block(
         lines.extend(
             _render_var_table(var_name, counts, field_counts, largest, samples)
         )
+
+    by_layer = note_data.get("by_layer") or {}
+    if by_layer:
+        ordered = sorted(by_layer.items(), key=lambda kv: kv[1], reverse=True)[:10]
+        bits = []
+        for layer, fired in ordered:
+            layer_share = f"{fired / count * 100:.0f}%" if count else "—"
+            bits.append(f"{layer} ({_fmt_count(fired)}, {layer_share})")
+        lines.append("By infrastructure: " + ", ".join(bits))
+        lines.append("")
     return lines
 
 
@@ -558,6 +569,115 @@ def _render_marginal_md(
     return lines
 
 
+def _render_infrastructure(
+    layer_counts: Dict[str, int],
+    field_counts_by_layer: Dict[str, Dict[str, int]],
+    field_counts: Dict[str, int],
+    total_responses: int,
+    truncated: bool = False,
+) -> List[str]:
+    if not layer_counts:
+        return []
+    try:
+        roles = dict(default_fingerprinter().roles)
+    except (OSError, ValueError):
+        roles = {}
+    unmatched = int(layer_counts.get(UNMATCHED, 0))
+    matched = {k: int(v) for k, v in layer_counts.items() if k != UNMATCHED}
+    fingerprinted = max(0, total_responses - unmatched)
+    coverage = (fingerprinted / total_responses * 100) if total_responses else 0
+    lines = [
+        "## Infrastructure",
+        "",
+        "Best-effort fingerprint of the CDN / server / framework / platform "
+        "behind each response, from signal headers. A response can match "
+        "several layers, so these counts overlap. "
+        f"Fingerprinted {coverage:.1f}% of responses; "
+        f"{_fmt_count(unmatched)} matched no known layer.",
+        "",
+    ]
+    if matched:
+        lines.append("| Layer | Role | Responses | % of responses |")
+        lines.append("| --- | --- | --- | --- |")
+        for layer, count in sorted(
+            matched.items(), key=lambda kv: kv[1], reverse=True
+        ):
+            pct = (count / total_responses * 100) if total_responses else 0
+            lines.append(
+                f"| {layer} | {roles.get(layer, '')} | {_fmt_count(count)} | "
+                f"{pct:.1f}% |"
+            )
+        lines.append("")
+    if field_counts_by_layer:
+        ranked = sorted(
+            field_counts_by_layer.items(),
+            key=lambda kv: sum(kv[1].values()),
+            reverse=True,
+        )
+        body: List[str] = []
+        for name, layers in ranked[:25]:
+            if name.lower().startswith("x-crawler-"):
+                continue
+            total = field_counts.get(name.lower(), sum(layers.values()))
+            top = sorted(layers.items(), key=lambda kv: kv[1], reverse=True)[:6]
+            bits = [
+                f"{layer} {count / total * 100:.0f}%" if total else f"{layer} —"
+                for layer, count in top
+            ]
+            body.append(
+                f"| {_md_escape_pipe(name)} | {_md_escape_pipe(', '.join(bits))} |"
+            )
+        if body:
+            lines.append("### Headers by infrastructure")
+            lines.append("")
+            lines.append(
+                "Share of each header's occurrences seen on each layer "
+                "(layers overlap)."
+            )
+            lines.append("")
+            if truncated:
+                lines.append("_Long tail elided during shuffle; head only._")
+                lines.append("")
+            lines.append("| Header | Layers (share of occurrences) |")
+            lines.append("| --- | --- |")
+            lines.extend(body)
+            lines.append("")
+    return lines
+
+
+def _render_asn(
+    asn_counts: Dict[str, int], total_responses: int, truncated: bool = False
+) -> List[str]:
+    if not asn_counts:
+        return []
+    try:
+        asn_to_layer = dict(default_fingerprinter().asn_to_layer)
+    except (OSError, ValueError):
+        asn_to_layer = {}
+    ranked = sorted(asn_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
+    lines = [
+        "## Top networks (ASN)",
+        "",
+        "Autonomous System the crawl-time IP resolved to, by response count. "
+        "Networks without a layer label are not yet in the fingerprint table.",
+        "",
+    ]
+    if truncated:
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    lines.append("| ASN | Layer | Responses | % of responses |")
+    lines.append("| --- | --- | --- | --- |")
+    for asn_str, count in ranked:
+        try:
+            label = asn_to_layer.get(int(asn_str), "")
+        except ValueError:
+            label = ""
+        pct = (count / total_responses * 100) if total_responses else 0
+        lines.append(f"| AS{asn_str} | {label} | {_fmt_count(count)} | {pct:.1f}% |")
+    lines.append("")
+    return lines
+
+
 def _render_vary_section(vary: Dict[str, Any]) -> List[str]:
     if not vary:
         return []
@@ -725,6 +845,22 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(
         _render_field_counts(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
+        )
+    )
+    lines.extend(
+        _render_infrastructure(
+            data.get("layer_counts") or {},
+            data.get("field_counts_by_layer") or {},
+            field_counts,
+            total_responses,
+            bool(data.get("truncated_field_counts_by_layer")),
+        )
+    )
+    lines.extend(
+        _render_asn(
+            data.get("asn_counts") or {},
+            total_responses,
+            bool(data.get("truncated_asn_counts")),
         )
     )
     lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))

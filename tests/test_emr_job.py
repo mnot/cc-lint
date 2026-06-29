@@ -4,6 +4,7 @@ import unittest
 from typing import Any, Dict
 
 from cc_lint.emr.job import (
+    TOP_K_ASN,
     TOP_K_CSP_SITES,
     TOP_K_FIELD_COUNTS,
     TOP_K_RECIPES,
@@ -177,6 +178,96 @@ class TestMergeStatsDict(unittest.TestCase):
             target["vary"]["marginals"]["occ"],
             {"accept-encoding": 5, "cookie": 1},
         )
+
+
+class TestFingerprintMerges(unittest.TestCase):
+    def test_layer_stats_in_stats_dict(self) -> None:
+        target: Dict[str, Any] = {}
+        merge_stats_dict(
+            target,
+            {
+                "total_responses": 1,
+                "notes": {},
+                "layer_counts": {"cloudflare": 2, "__unmatched__": 1},
+                "field_counts_by_layer": {"server": {"cloudflare": 2}},
+            },
+        )
+        merge_stats_dict(
+            target,
+            {
+                "total_responses": 1,
+                "notes": {},
+                "layer_counts": {"cloudflare": 3, "nginx": 1},
+                "field_counts_by_layer": {
+                    "server": {"cloudflare": 3, "nginx": 1},
+                    "via": {"fastly": 1},
+                },
+            },
+        )
+        self.assertEqual(
+            target["layer_counts"],
+            {"cloudflare": 5, "nginx": 1, "__unmatched__": 1},
+        )
+        self.assertEqual(
+            target["field_counts_by_layer"],
+            {"server": {"cloudflare": 5, "nginx": 1}, "via": {"fastly": 1}},
+        )
+
+    def test_layer_stats_in_globals(self) -> None:
+        target: Dict[str, Any] = {}
+        merge_globals(
+            target,
+            {
+                "total_responses": 1,
+                "layer_counts": {"akamai": 4},
+                "field_counts_by_layer": {"x-xss-protection": {"akamai": 4}},
+            },
+        )
+        merge_globals(
+            target,
+            {"total_responses": 1, "layer_counts": {"akamai": 1, "vercel": 2}},
+        )
+        self.assertEqual(target["layer_counts"], {"akamai": 5, "vercel": 2})
+        self.assertEqual(
+            target["field_counts_by_layer"], {"x-xss-protection": {"akamai": 4}}
+        )
+
+    def test_note_by_layer_sums(self) -> None:
+        target = _empty_note()
+        merge_note(target, {"count": 2, "by_layer": {"cloudflare": 2}})
+        merge_note(target, {"count": 1, "by_layer": {"cloudflare": 1, "nginx": 1}})
+        self.assertEqual(target["count"], 3)
+        self.assertEqual(target["by_layer"], {"cloudflare": 3, "nginx": 1})
+
+    def test_fcbl_trimmed(self) -> None:
+        stats: Dict[str, Any] = {
+            "field_counts_by_layer": {
+                f"h{i}": {"nginx": i + 1} for i in range(TOP_K_FIELD_COUNTS + 5)
+            }
+        }
+        trim_stats_dict(stats)
+        self.assertEqual(len(stats["field_counts_by_layer"]), TOP_K_FIELD_COUNTS)
+        self.assertTrue(stats.get("truncated_field_counts_by_layer"))
+        # The highest-total headers survive the trim.
+        self.assertIn(f"h{TOP_K_FIELD_COUNTS + 4}", stats["field_counts_by_layer"])
+
+    def test_fcbl_below_cap_no_flag(self) -> None:
+        stats: Dict[str, Any] = {"field_counts_by_layer": {"server": {"nginx": 1}}}
+        trim_stats_dict(stats)
+        self.assertNotIn("truncated_field_counts_by_layer", stats)
+
+    def test_asn_counts_merge_and_trim(self) -> None:
+        target: Dict[str, Any] = {}
+        merge_stats_dict(
+            target,
+            {"total_responses": 1, "notes": {}, "asn_counts": {"13335": 2}},
+        )
+        merge_globals(target, {"total_responses": 1, "asn_counts": {"13335": 3, "1": 1}})
+        self.assertEqual(target["asn_counts"], {"13335": 5, "1": 1})
+        big = {"asn_counts": {str(i): i + 1 for i in range(TOP_K_ASN + 3)}}
+        trim_stats_dict(big)
+        self.assertEqual(len(big["asn_counts"]), TOP_K_ASN)
+        self.assertTrue(big.get("truncated_asn_counts"))
 
 
 class TestMergeGlobalsHLLAndFlags(unittest.TestCase):

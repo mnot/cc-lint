@@ -5,6 +5,7 @@ from typing import List, Optional, Set
 import click
 
 from .crawling import get_warc_stream, iter_warc_records
+from .ipasn import load_ipasn
 from .linting import lint_record
 from .report import default_markdown_path, render_report
 from .stats import StatsCollector
@@ -86,6 +87,14 @@ def _run_lint_loop(  # pylint: disable=too-many-positional-arguments
 @click.option(
     "--top-sites", type=int, default=None, help="Filter records to top N websites"
 )
+@click.option(
+    "--ipasn-path",
+    default=None,
+    help=(
+        "Path to a CAIDA pfx2as IP->ASN table for ASN-based infrastructure "
+        "fingerprinting. When unset, fingerprinting is header-only."
+    ),
+)
 def lint_cc(  # pylint: disable=too-many-positional-arguments
     paths_file: str,
     limit: int,
@@ -93,6 +102,7 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
     record_limit: int,
     cache_dir: Optional[str],
     top_sites: Optional[int],
+    ipasn_path: Optional[str],
 ) -> None:
     """Run httplint on Common Crawl WAT files and render an HTML + Markdown report."""
     logger.info("Reading paths from %s", paths_file)
@@ -102,8 +112,9 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
     logger.info("Found %s WARC paths. Processing first %s.", len(warc_paths), limit)
 
     top_sites_set = _load_top_sites_set(top_sites, cache_dir)
+    ipasn = load_ipasn(ipasn_path) if ipasn_path else None
 
-    stats = StatsCollector()
+    stats = StatsCollector(ipasn=ipasn)
     _run_lint_loop(warc_paths, limit, record_limit, cache_dir, top_sites_set, stats)
 
     render_report(stats.to_dict(), output)

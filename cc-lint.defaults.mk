@@ -30,3 +30,18 @@ EMR_LOG_CLUSTER_ID ?=
 TRANCO_CACHE_DIR ?= $(HOME)/.cache/cc-lint
 TRANCO_CACHE_BASENAME ?= top-1m.csv
 TRANCO_CACHE ?= $(TRANCO_CACHE_DIR)/$(TRANCO_CACHE_BASENAME)
+
+# IP-to-ASN (CAIDA pfx2as) for ASN-based infrastructure fingerprinting (#4).
+# Optional: when IPASN_CACHE exists, the EMR job ships it to mappers and the
+# local lint passes it through, enabling ASN matching. Build it with
+# `make ipasn-cache` after setting the snapshot URLs below; otherwise
+# fingerprinting stays header-only.
+IPASN_CACHE_DIR ?= $(HOME)/.cache/cc-lint
+IPASN_CACHE ?= $(IPASN_CACHE_DIR)/ipasn.tsv
+# CAIDA RouteViews pfx2as snapshot URLs (IPv4 + optional IPv6), gzipped. Pin to
+# a date near the crawl month -- ASN ownership drifts, and pinning keeps runs
+# reproducible. Find the timestamped files under:
+#   https://publicdata.caida.org/datasets/routing/routeviews-prefix2as/
+#   https://publicdata.caida.org/datasets/routing/routeviews6-prefix2as/
+IPASN_V4_URL ?=
+IPASN_V6_URL ?=

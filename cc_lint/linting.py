@@ -63,6 +63,13 @@ def _lint_wat_record(record: Any) -> Optional[HttpResponseLinter]:
     if target_uri:
         linter.base_uri = target_uri
 
+    # Crawl-time IP the crawler connected to, for ASN fingerprinting (issue #4).
+    # httplint's linter has no typed slot for this, so attach it dynamically;
+    # StatsCollector reads it back with getattr.
+    ip_address = warc_header_meta.get("WARC-IP-Address")
+    if ip_address:
+        setattr(linter, "ip_address", ip_address)
+
     # Date
     warc_date = warc_header_meta.get("WARC-Date")
     if warc_date:
@@ -119,6 +126,12 @@ def _lint_warc_record(record: Any) -> Optional[HttpResponseLinter]:
     target_uri = record.rec_headers.get_header("WARC-Target-URI")
     if target_uri:
         linter.base_uri = target_uri
+
+    # Crawl-time IP the crawler connected to, for ASN fingerprinting (issue #4).
+    # Attached dynamically; StatsCollector reads it back with getattr.
+    ip_address = record.rec_headers.get_header("WARC-IP-Address")
+    if ip_address:
+        setattr(linter, "ip_address", ip_address)
 
     # Set Request Time (start_time)
     warc_date = record.rec_headers.get_header("WARC-Date")

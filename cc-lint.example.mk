@@ -23,3 +23,9 @@ WHEEL_S3_PATH = s3://YOUR-BUCKET/cc-lint/wheels/
 # MAP_TASKS      = 1600
 # REDUCES        = 20
 # MRJOB_CLEANUP  = TMP
+
+# Optional: ASN-based infrastructure fingerprinting (issue #4). Pin these to a
+# CAIDA pfx2as snapshot near the crawl month, then run `make ipasn-cache`. Once
+# the table is built, EMR and local runs pick it up automatically.
+# IPASN_V4_URL = https://publicdata.caida.org/datasets/routing/routeviews-prefix2as/2026/03/routeviews-rv2-20260301-1200.pfx2as.gz
+# IPASN_V6_URL = https://publicdata.caida.org/datasets/routing/routeviews6-prefix2as/2026/03/routeviews-rv6-20260301-1200.pfx2as.gz

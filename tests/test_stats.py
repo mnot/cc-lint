@@ -1,6 +1,7 @@
 """Behavioural tests for cc_lint.stats.StatsCollector."""
 
 # pylint: disable=disallowed-name,invalid-name,attribute-defined-outside-init
+import ipaddress
 import unittest
 from typing import Any, cast
 
@@ -8,6 +9,7 @@ from httplint.message import HttpResponseLinter
 from httplint.note import Note, categories, levels
 
 from cc_lint.hll import hll_estimate
+from cc_lint.ipasn import IpAsnTable
 from cc_lint.stats import StatsCollector
 
 
@@ -39,6 +41,94 @@ def _linter_for(url: str) -> HttpResponseLinter:
     linter = HttpResponseLinter()
     linter.base_uri = url
     return linter
+
+
+def _linter_with_headers(
+    url: str, headers: list[tuple[str, str]]
+) -> HttpResponseLinter:
+    linter = HttpResponseLinter(no_content=True)
+    linter.base_uri = url
+    linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+    linter.process_headers(
+        [(name.encode("latin1"), value.encode("latin1")) for name, value in headers]
+    )
+    linter.finish_content(True)
+    return linter
+
+
+class TestFingerprintAccumulation(unittest.TestCase):
+    def test_layer_counts_and_fields(self) -> None:
+        stats = StatsCollector()
+        # Cloudflare in front of nginx, plus a bare unmatched server.
+        stats.process_linter(
+            _linter_with_headers(
+                "http://a.example/",
+                [
+                    ("cf-ray", "abc-LHR"),
+                    ("server", "nginx"),
+                    ("x-xss-protection", "0"),
+                ],
+            )
+        )
+        stats.process_linter(
+            _linter_with_headers("http://b.example/", [("server", "CoolServer/9")])
+        )
+        d = stats.to_dict()
+        # Layers overlap: response a counts under both cloudflare and nginx.
+        self.assertEqual(d["layer_counts"].get("cloudflare"), 1)
+        self.assertEqual(d["layer_counts"].get("nginx"), 1)
+        # Response b matched nothing.
+        self.assertEqual(d["layer_counts"].get("__unmatched__"), 1)
+        # The motivating slice: x-xss-protection attributed to the layer(s)
+        # of the response that carried it.
+        self.assertEqual(
+            d["field_counts_by_layer"]["x-xss-protection"],
+            {"cloudflare": 1, "nginx": 1},
+        )
+
+    def test_note_by_layer(self) -> None:
+        stats = StatsCollector()
+        # x-xss-protection is deprecated; httplint fires FIELD_DEPRECATED,
+        # which should carry a by_layer breakdown.
+        stats.process_linter(
+            _linter_with_headers(
+                "http://a.example/",
+                [("cf-ray", "z"), ("x-xss-protection", "1; mode=block")],
+            )
+        )
+        d = stats.to_dict()
+        layered = [nid for nid, nd in d["notes"].items() if nd.get("by_layer")]
+        self.assertTrue(layered, "expected at least one note with a by_layer map")
+        for nid in layered:
+            self.assertIn("cloudflare", d["notes"][nid]["by_layer"])
+
+    def test_asn_match_and_counts(self) -> None:
+        # An IP that resolves to Cloudflare's ASN should match the cloudflare
+        # layer even with no Cloudflare header, and feed the ASN histogram.
+        table = IpAsnTable()
+        table.add(int(ipaddress.ip_address("203.0.113.0")), 24, 4, 13335)
+        table.finalize()
+        stats = StatsCollector(ipasn=table)
+        linter = _linter_with_headers("http://a.example/", [("server", "Apache")])
+        setattr(linter, "ip_address", "203.0.113.5")
+        stats.process_linter(linter)
+        d = stats.to_dict()
+        # cloudflare (by ASN) and apache (by header) both present.
+        self.assertEqual(d["layer_counts"].get("cloudflare"), 1)
+        self.assertEqual(d["layer_counts"].get("apache"), 1)
+        self.assertEqual(d["asn_counts"], {"13335": 1})
+
+    def test_asn_unresolved_is_unmatched(self) -> None:
+        table = IpAsnTable()
+        table.add(int(ipaddress.ip_address("203.0.113.0")), 24, 4, 13335)
+        table.finalize()
+        stats = StatsCollector(ipasn=table)
+        linter = _linter_with_headers("http://a.example/", [("x-foo", "bar")])
+        setattr(linter, "ip_address", "198.51.100.7")  # not in the table
+        stats.process_linter(linter)
+        d = stats.to_dict()
+        self.assertEqual(d["layer_counts"].get("__unmatched__"), 1)
+        self.assertEqual(d["asn_counts"], {})
 
 
 class TestStatsCollectorAccumulation(unittest.TestCase):

@@ -9,6 +9,7 @@ Markdown sibling at the same path with the extension swapped to ``.md``.
 import os
 from typing import Any, Dict, Optional
 
+from cc_lint.fingerprint import default_fingerprinter
 from cc_lint.hll import hll_estimate
 from cc_lint.report.markdown import render_markdown
 from cc_lint.report.sections import (
@@ -16,8 +17,10 @@ from cc_lint.report.sections import (
     render_category_overview,
     render_csp_section,
     render_field_counts_section,
+    render_asn_section,
     render_header_stats,
     render_health_summary,
+    render_infrastructure_section,
     render_missing_section,
     render_notes_section,
     render_run_context,
@@ -62,6 +65,21 @@ def _build_html(data: Dict[str, Any]) -> str:
     severity_counts = data.get("severity_counts") or {}
     vary = data.get("vary") or {}
 
+    layer_counts: Dict[str, int] = data.get("layer_counts") or {}
+    field_counts_by_layer: Dict[str, Dict[str, int]] = (
+        data.get("field_counts_by_layer") or {}
+    )
+    asn_counts: Dict[str, int] = data.get("asn_counts") or {}
+    try:
+        fingerprinter = default_fingerprinter()
+        layer_roles = dict(fingerprinter.roles)
+        asn_to_layer = dict(fingerprinter.asn_to_layer)
+    except (OSError, ValueError):
+        # Role labels are cosmetic; a missing/broken table must not block the
+        # report. Fall back to blank roles.
+        layer_roles = {}
+        asn_to_layer = {}
+
     body_parts = [
         render_header_stats(
             total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
@@ -80,6 +98,20 @@ def _build_html(data: Dict[str, Any]) -> str:
         ),
         render_field_counts_section(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
+        ),
+        render_infrastructure_section(
+            layer_counts,
+            field_counts_by_layer,
+            field_counts,
+            total_responses,
+            layer_roles,
+            bool(data.get("truncated_field_counts_by_layer")),
+        ),
+        render_asn_section(
+            asn_counts,
+            total_responses,
+            asn_to_layer,
+            bool(data.get("truncated_asn_counts")),
         ),
         render_csp_section(csp_sizes),
         render_vary_section(vary),

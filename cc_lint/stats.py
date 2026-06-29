@@ -13,6 +13,8 @@ from cc_lint.hll import (
     hll_add,
     make_registers,
 )
+from cc_lint.fingerprint import UNMATCHED, Fingerprinter, default_fingerprinter
+from cc_lint.ipasn import IpAsnTable
 from cc_lint.recipes import RecipeStats
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
@@ -250,11 +252,35 @@ def iter_collected_samples(
 
 
 class StatsCollector:
-    def __init__(self, sample_sites: Optional[Set[str]] = None) -> None:
+    def __init__(
+        self,
+        sample_sites: Optional[Set[str]] = None,
+        fingerprinter: Optional[Fingerprinter] = None,
+        ipasn: Optional[IpAsnTable] = None,
+    ) -> None:
         self.note_data: Dict[str, NoteDataType] = {}
         self.total_responses = 0
         self.field_counts: Counter[str] = Counter()
         self.unprocessed_counts: Counter[str] = Counter()
+        # Best-effort infrastructure fingerprinting (issue #4). The default
+        # packaged table is shared (and cached) across collectors. ``ipasn``
+        # is the optional offline IP->ASN table; when present, the crawl-time
+        # WARC-IP-Address is resolved to an ASN that can match a layer by
+        # network (and feeds the top-ASN histogram). None disables ASN logic.
+        self.fingerprinter = fingerprinter or default_fingerprinter()
+        self.ipasn = ipasn
+        # Resolved-ASN -> response count, for surfacing big networks that
+        # aren't (yet) in the fingerprint table. Keyed by str(asn) for JSON.
+        self.asn_counts: Counter[str] = Counter()
+        # Responses matching each layer, with an UNMATCHED bucket. Layers
+        # overlap (a response can be cloudflare + nginx + nextjs), so this
+        # sums to more than total_responses; that's expected and gives each
+        # layer a real per-layer denominator.
+        self.layer_counts: Counter[str] = Counter()
+        # field name (lower) -> layer -> occurrences, sliced from the same
+        # per-occurrence accounting as field_counts so it shares its
+        # denominator. Answers "which infra emits header H".
+        self.field_counts_by_layer: Dict[str, Counter[str]] = {}
         # When set, only responses whose site is in this set contribute samples
         # (URLs in samples/var_samples). Note counts, var counts, and field
         # histograms are unaffected. None disables the gate.
@@ -294,6 +320,23 @@ class StatsCollector:
         site = normalize_site(getattr(linter, "base_uri", None))
         if site:
             hll_add(self.sites_hll, HLL_P_GLOBAL, site)
+        # Fingerprint the response once, up front, so the layer set can be
+        # attributed to every note and header below. The layer set unions
+        # header signals with an optional ASN match from the crawl-time IP.
+        # Materialize the header list once: it feeds fingerprint matching here
+        # and field counting in _process_headers, so we avoid a second walk of
+        # linter.headers.text on the per-response hot path.
+        header_items = [
+            (str(name).lower(), value) for name, value in linter.headers.text
+        ]
+        layers, asn = self._fingerprint(header_items, linter)
+        if asn is not None:
+            self.asn_counts[str(asn)] += 1
+        if layers:
+            for layer in layers:
+                self.layer_counts[layer] += 1
+        else:
+            self.layer_counts[UNMATCHED] += 1
         # Track the maximum severity fired on this response so we can roll
         # it up into severity_counts after the note loop.
         max_severity: Optional[str] = None
@@ -308,11 +351,31 @@ class StatsCollector:
                 or severity_order[severity] > severity_order[max_severity]
             ):
                 max_severity = severity
-            self._process_note(note, linter, site)
+            self._process_note(note, linter, site, layers)
 
         self.severity_counts[max_severity or "clean"] += 1
-        self._process_headers(linter, site)
+        self._process_headers(header_items, linter, site, layers)
         self._process_vary(linter, site)
+
+    def _fingerprint(
+        self,
+        header_items: List[tuple[str, Any]],
+        linter: HttpResponseLinter,
+    ) -> tuple[Set[str], Optional[int]]:
+        """Return (matched layer ids, resolved ASN or None) for a response.
+
+        ``header_items`` is the pre-lowercased (name, value) list shared with
+        :meth:`_process_headers` so headers are walked once per response.
+        """
+        header_map: Dict[str, List[str]] = {}
+        for name_lower, value in header_items:
+            header_map.setdefault(name_lower, []).append(str(value))
+        asn: Optional[int] = None
+        if self.ipasn is not None:
+            ip_address = getattr(linter, "ip_address", None)
+            if ip_address:
+                asn = self.ipasn.lookup(str(ip_address))
+        return self.fingerprinter.match(header_map, asn), asn
 
     def _process_vary(self, linter: HttpResponseLinter, site: Optional[str]) -> None:
         """Tabulate Vary composition for responses carrying a Vary header.
@@ -333,7 +396,11 @@ class StatsCollector:
             self.vary_marginals.add(token, site)
 
     def _process_note(
-        self, note: Note, linter: HttpResponseLinter, site: Optional[str]
+        self,
+        note: Note,
+        linter: HttpResponseLinter,
+        site: Optional[str],
+        layers: Set[str],
     ) -> None:
         note_id = note.__class__.__name__
 
@@ -350,6 +417,11 @@ class StatsCollector:
             sites_hll = self.note_data[note_id].get("sites_hll")
             if sites_hll is not None:
                 hll_add(sites_hll, HLL_P_PER_NOTE, site)
+
+        if layers:
+            by_layer = self.note_data[note_id].setdefault("by_layer", {})
+            for layer in layers:
+                by_layer[layer] = by_layer.get(layer, 0) + 1
 
         self._track_vars(note, note_id)
         self._track_numeric_maxes(note, note_id)
@@ -436,13 +508,25 @@ class StatsCollector:
         if sample_site not in existing_sites:
             self.note_data[note_id]["samples"].append(sample)
 
-    def _process_headers(self, linter: HttpResponseLinter, site: Optional[str]) -> None:
-        # Count fields (case-insensitive); decode names if they are bytes.
+    def _process_headers(
+        self,
+        header_items: List[tuple[str, Any]],
+        linter: HttpResponseLinter,
+        site: Optional[str],
+        layers: Set[str],
+    ) -> None:
+        # Count fields (case-insensitive). ``header_items`` is the (lowercased
+        # name, raw value) list already materialized in process_linter.
         # Capture CSP byte size for the per-site histogram while we iterate.
         csp_bytes = 0
-        for name, value in linter.headers.text:
-            name_lower = str(name).lower()
+        for name_lower, value in header_items:
             self.field_counts[name_lower] += 1
+            if layers:
+                per_layer = self.field_counts_by_layer.setdefault(
+                    name_lower, Counter()
+                )
+                for layer in layers:
+                    per_layer[layer] += 1
             if name_lower == "content-security-policy":
                 csp_bytes += _header_value_byte_len(value)
 
@@ -471,6 +555,12 @@ class StatsCollector:
             "sites_hll": self.sites_hll,
             "csp_max_by_site": dict(self.csp_max_by_site),
             "severity_counts": dict(self.severity_counts),
+            "layer_counts": dict(self.layer_counts),
+            "field_counts_by_layer": {
+                field: dict(layers)
+                for field, layers in self.field_counts_by_layer.items()
+            },
+            "asn_counts": dict(self.asn_counts),
         }
         if self.responses_with_vary:
             result["vary"] = {
