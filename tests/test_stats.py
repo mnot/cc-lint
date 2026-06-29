@@ -165,6 +165,62 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
         self.assertNotIn("\n", key)
         self.assertEqual(field_error[key], 1)
 
+    def test_subnotes_are_counted(self) -> None:
+        # httplint attaches strength/quality findings as children via
+        # Note.add_child (appended to note.subnotes), not to linter.notes.
+        # The collector must recurse into them; otherwise the entire
+        # strength layer (CSP_UNSAFE_INLINE, HSTS_NO_SUBDOMAINS, ...) is
+        # silently dropped. Regression test for #5 / #2.
+        stats = StatsCollector()
+        linter = _linter_for("http://a.example/")
+        parent: Any = _InfoNote("s")
+        parent.add_child(_WarnNote)
+        _attach_note(linter, parent)
+        stats.process_linter(linter)
+        self.assertEqual(stats.note_data[_InfoNote.__name__]["count"], 1)
+        self.assertEqual(stats.note_data[_WarnNote.__name__]["count"], 1)
+        # The child's WARN should bump the response's max severity above the
+        # parent's INFO.
+        self.assertEqual(stats.severity_counts.get("warn"), 1)
+        self.assertIsNone(stats.severity_counts.get("info"))
+
+    def test_nested_subnotes_are_counted(self) -> None:
+        # add_child can be called on a child, producing grandchildren; the
+        # walk is depth-first, not single-level.
+        stats = StatsCollector()
+        linter = _linter_for("http://a.example/")
+        parent: Any = _InfoNote("s")
+        child = parent.add_child(_InfoNote)
+        child.add_child(_WarnNote)
+        _attach_note(linter, parent)
+        stats.process_linter(linter)
+        self.assertEqual(stats.note_data[_InfoNote.__name__]["count"], 2)
+        self.assertEqual(stats.note_data[_WarnNote.__name__]["count"], 1)
+
+    def test_hsts_and_csp_strength_subnotes_fire(self) -> None:
+        # End-to-end over real headers: a weak HSTS (no includeSubDomains,
+        # short max-age) and a CSP with 'unsafe-inline' must surface their
+        # strength sub-notes, which httplint emits as subnotes of HSTS_VALID
+        # and CONTENT_SECURITY_POLICY. Regression test for #5 / #2.
+        stats = StatsCollector()
+        linter = _linter_for("https://example.com/")
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        linter.process_headers(
+            [
+                (b"strict-transport-security", b"max-age=600"),
+                (b"content-security-policy", b"script-src 'unsafe-inline'"),
+            ]
+        )
+        linter.finish_content(True)
+        stats.process_linter(linter)
+        for note_id in (
+            "HSTS_NO_SUBDOMAINS",
+            "HSTS_SHORT_MAX_AGE",
+            "CSP_UNSAFE_INLINE",
+        ):
+            self.assertIn(note_id, stats.note_data, f"{note_id} was dropped")
+            self.assertEqual(stats.note_data[note_id]["count"], 1)
+
     def test_to_dict_carries_sites_hll_and_note_data(self) -> None:
         stats = StatsCollector()
         linter = _linter_for("http://a.example/")
