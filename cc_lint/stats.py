@@ -21,6 +21,12 @@ from cc_lint.hll import (
 from cc_lint.ipasn import IpAsnTable
 from cc_lint.recipes import RecipeStats, recipe_key
 from cc_lint.top_sites import normalize_site
+from cc_lint.transition import (
+    TRANSITION_PAIRS,
+    TransitionStats,
+    build_context,
+    categorize,
+)
 from cc_lint.types import NoteDataType, SampleType
 from cc_lint.vary import ASTERISK, vary_tokens
 
@@ -461,6 +467,13 @@ class StatsCollector:
         self.cooccur_marginals = RecipeStats(HLL_P_PER_NOTE)
         self.cooccur_pairs = RecipeStats(HLL_P_RECIPE)
         self.cooccur_by_layer: Dict[str, Counter[str]] = {}
+        # Legacy/modern dual-emit pairs (issue #11). Every response is binned
+        # into one of four buckets per configured pair (both / modern-only /
+        # legacy-only / neither). The key space is bounded by pairs x 4, so a
+        # single default-precision site HLL per bucket is affordable and there
+        # is no trim path -- unlike the recipe views, this cannot grow with the
+        # corpus. See cc_lint.transition.
+        self.transition = TransitionStats(HLL_P_PER_NOTE)
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -509,6 +522,7 @@ class StatsCollector:
         self._process_cache_control(linter, site)
         self._process_value_histograms(linter)
         self._process_cooccur(header_items, site, layers)
+        self._process_transition(linter, header_items, site)
 
     def _process_value_histograms(self, linter: HttpResponseLinter) -> None:
         """Tabulate the corpus-wide numeric-header histograms (issue #8)."""
@@ -601,6 +615,24 @@ class StatsCollector:
             per_layer = self.cooccur_by_layer.setdefault(bundle, Counter())
             for layer in layers:
                 per_layer[layer] += 1
+
+    def _process_transition(
+        self,
+        linter: HttpResponseLinter,
+        header_items: List[tuple[str, Any]],
+        site: Optional[str],
+    ) -> None:
+        """Bin one response into a bucket per legacy/modern pair (issue #11).
+
+        Builds the detection context once (present headers + parsed CSP /
+        Cache-Control directive sets) and classifies the response for every
+        configured pair, so each pair gets exactly one bucket per response and
+        shares ``total_responses`` as its denominator (read back in
+        ``to_dict``).
+        """
+        ctx = build_context(linter, header_items)
+        for pair in TRANSITION_PAIRS:
+            self.transition.add(pair.key, categorize(pair, ctx), site)
 
     def _process_note(
         self,
@@ -793,5 +825,9 @@ class StatsCollector:
                     bundle: dict(layers)
                     for bundle, layers in self.cooccur_by_layer.items()
                 },
+            }
+            result["transition"] = {
+                "responses": self.total_responses,
+                "pairs": self.transition.to_dict(),
             }
         return result

@@ -43,6 +43,7 @@ from cc_lint.emr.job import (
     CSP_SIZES_KEY,
     GLOBALS_KEY,
     NOTE_KEY_PREFIX,
+    TRANSITION_KEY,
     VALUE_HISTOGRAMS_KEY,
     VARY_KEY,
     merge_csp_sizes,
@@ -52,6 +53,7 @@ from cc_lint.emr.job import (
     trim_stats_dict,
 )
 from cc_lint.report import default_markdown_path, render_report
+from cc_lint.transition import merge_transition
 from cc_lint.vary import merge_vary
 
 
@@ -101,6 +103,8 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
             merge_value_histograms(merged.setdefault("value_histograms", {}), value)
         elif key == COOCCUR_KEY:
             merge_cooccur(merged.setdefault("cooccur", {}), value)
+        elif key == TRANSITION_KEY:
+            merge_transition(merged.setdefault("transition", {}), value)
         else:
             print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
 

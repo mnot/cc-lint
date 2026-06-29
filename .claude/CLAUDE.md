@@ -36,9 +36,15 @@ breaking any of them turns an 11-hour run into a memory disaster:
   new tracked dict means adding a trim path and a `truncated_*` flag.
 - **Sharded reducer keys** (`cc_lint.emr.job`): the mapper does NOT emit a
   single "stats" record. It emits `GLOBALS_KEY`, `NOTE_KEY_PREFIX:<note_id>`
-  per note, `CSP_SIZES_KEY`, `VARY_KEY`, `CACHE_CONTROL_KEY`, and
-  `COOCCUR_KEY`. Adding a new top-level aggregation usually means a new
+  per note, `CSP_SIZES_KEY`, `VARY_KEY`, `CACHE_CONTROL_KEY`, `COOCCUR_KEY`,
+  and `TRANSITION_KEY`. Adding a new top-level aggregation usually means a new
   shard key; do not stuff it into globals.
+- **Bounded dicts skip the trim path**. The transition-tax block
+  (`cc_lint.transition`, `TRANSITION_KEY`) is the exception to the "new dict
+  = new trim path + `truncated_*` flag" rule: its key space is
+  `len(TRANSITION_PAIRS) × 4 categories`, a compile-time constant, so it has
+  no long tail to cap and the reducer just folds it. If you add a config-bounded
+  aggregation, document *why* it's untrimmed; only corpus-growing dicts need a trim.
 - **HLL precision**: `HLL_P_GLOBAL=12` (4096 registers), `HLL_P_PER_NOTE=8`
   (256 registers), `HLL_P_RECIPE=6` (64 registers). Per-note HLLs are
   deliberately less precise to keep shuffle bounded across ~150 notes.
@@ -59,14 +65,16 @@ breaking any of them turns an 11-hour run into a memory disaster:
 
 ## Merge contract (don't drop fields)
 
-`StatsCollector.to_dict()` produces 10 fields today; three are conditional —
+`StatsCollector.to_dict()` produces 11 fields today; four are conditional —
 `vary` is emitted only when a response carried a `Vary` header, and
 `cache_control` only when one carried a `Cache-Control` header — while
-`cooccur` (the security-header co-occurrence block) is emitted whenever
-there were any responses. `merge_stats_dict()` in `cc_lint/emr/job.py` must
-merge **every** field (`merge_cooccur` covers the bundle/marginal/pair dicts
-and the per-bundle `by_layer` infra breakdown; `merge_cache_control` and
-`merge_vary` cover their recipe/marginal dicts), and `merge_note()` must
+`cooccur` (the security-header co-occurrence block) and `transition` (the
+legacy/modern dual-emit / transition-tax block, issue #11) are emitted
+whenever there were any responses. `merge_stats_dict()` in `cc_lint/emr/job.py`
+must merge **every** field (`merge_cooccur` covers the bundle/marginal/pair
+dicts and the per-bundle `by_layer` infra breakdown; `merge_transition` covers
+the per-pair, per-category occurrence + site-HLL dicts; `merge_cache_control`
+and `merge_vary` cover their recipe/marginal dicts), and `merge_note()` must
 merge every per-note field — anything missed is silently dropped at
 mapper-aggregation time, the reducer never sees it, and the report shows
 zeros. We had this exact bug; the regression test in
@@ -155,6 +163,7 @@ cc_lint/
   stats.py             # StatsCollector; VARS_TO_TRACK; get_note_value
   histograms.py        # bucket scales for numeric note vars
   hll.py               # HyperLogLog
+  transition.py        # legacy/modern dual-emit pairs (transition tax, #11)
   top_sites.py         # Tranco filter + site normalisation
   report/
     sections.py        # HTML sections
