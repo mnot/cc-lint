@@ -22,6 +22,7 @@ from cc_lint.report.sections import (
     render_notes_section,
     render_run_context,
     render_unprocessed_section,
+    render_vary_section,
 )
 from cc_lint.report.severity import (
     build_category_index,
@@ -59,6 +60,7 @@ def _build_html(data: Dict[str, Any]) -> str:
 
     csp_sizes = data.get("csp_max_by_site") or {}
     severity_counts = data.get("severity_counts") or {}
+    vary = data.get("vary") or {}
 
     body_parts = [
         render_header_stats(
@@ -80,6 +82,7 @@ def _build_html(data: Dict[str, Any]) -> str:
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
         ),
         render_csp_section(csp_sizes),
+        render_vary_section(vary, distinct_sites_estimate),
         render_unprocessed_section(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         ),

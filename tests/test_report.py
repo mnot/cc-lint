@@ -8,7 +8,6 @@ from typing import Any, Dict
 from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
 from cc_lint.report import render_report
 
-
 SAMPLE_STATS = {
     "total_responses": 1234,
     "field_counts": {"content-type": 1234, "x-custom": 7, "server": 1100},
@@ -30,7 +29,9 @@ SAMPLE_STATS = {
         },
         "CC_DUP": {
             "count": 4,
-            "samples": [{"url": "http://c.example/", "vars": {"directive": "no-cache"}}],
+            "samples": [
+                {"url": "http://c.example/", "vars": {"directive": "no-cache"}}
+            ],
             "vars": {"directive": {"no-cache": 4}},
         },
     },
@@ -104,7 +105,7 @@ class TestRenderer(unittest.TestCase):
         # The warning appears at least once per affected section (headers,
         # unprocessed, and per-note vars).
         self.assertGreaterEqual(html.count("long tail"), 3)
-        self.assertIn("class=\"muted truncated\"", html)
+        self.assertIn('class="muted truncated"', html)
 
     def test_sites_hll_surfaces(self) -> None:
         global_hll = make_registers(HLL_P_GLOBAL)
@@ -242,13 +243,54 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Findings by category", md)
         self.assertIn("### Caching", md)
 
+    def test_vary_section_rendered(self) -> None:
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "vary": {
+                "responses_with_vary": 10,
+                "recipes": {
+                    "occ": {
+                        "accept-encoding, cookie, x-ab-bucket": 6,
+                        "user-agent": 4,
+                    },
+                    "hlls": {},
+                },
+                "marginals": {
+                    "occ": {
+                        "accept-encoding": 6,
+                        "cookie": 6,
+                        "x-ab-bucket": 6,
+                        "user-agent": 4,
+                    },
+                    "hlls": {},
+                },
+            },
+        }
+        html, md = self._render_both(data)
+        self.assertIn('id="vary"', html)
+        self.assertIn("Vary composition", html)
+        self.assertIn("## Vary composition", md)
+        # Synthetic token flagged in HTML; recipe surfaces in both.
+        self.assertIn("vary-synthetic", html)
+        self.assertIn("x-ab-bucket", html)
+        self.assertIn("Accept-Encoding factored out", html)
+        self.assertIn("Non-standard Vary tokens", md)
+        self.assertIn("x-ab-bucket", md)
+
+    def test_no_vary_section_absent(self) -> None:
+        html = self._render({"total_responses": 5, "notes": {}})
+        self.assertNotIn('id="vary"', html)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,
             "notes": {
                 "BAD_SYNTAX": {
                     "count": 1,
-                    "samples": [{"url": "http://x/?<script>alert(1)</script>", "vars": {}}],
+                    "samples": [
+                        {"url": "http://x/?<script>alert(1)</script>", "vars": {}}
+                    ],
                     "vars": {},
                 }
             },

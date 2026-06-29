@@ -5,7 +5,6 @@ methodology / truncation explanatory text can be reviewed and
 edited in isolation.
 """
 
-
 METHODOLOGY_NOTE = (
     "Percentages describe this Common Crawl result set, not the entire web. "
     "Counts reflect what Common Crawl fetched (after robots.txt, WAF, paywall, "
@@ -237,6 +236,11 @@ STYLE = """
     height: 8px;
     vertical-align: middle;
     min-width: 1px;
+  }
+
+  span.vary-synthetic {
+    color: var(--bad-fg);
+    font-weight: 600;
   }
 
   .health-bar {

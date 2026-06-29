@@ -6,17 +6,19 @@ from typing import Any, Dict
 from cc_lint.emr.job import (
     TOP_K_CSP_SITES,
     TOP_K_FIELD_COUNTS,
+    TOP_K_RECIPES,
     TOP_K_VAR_VALUES,
     _failure_bucket,
     _trim_csp_sizes,
     merge_csp_sizes,
     merge_globals,
     merge_note,
-    sample_key,
     merge_stats_dict,
+    sample_key,
     trim_stats_dict,
 )
 from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
+from cc_lint.recipes import RecipeStats
 
 
 def _empty_note() -> Dict[str, Any]:
@@ -58,7 +60,11 @@ class TestMergeStatsDict(unittest.TestCase):
                     "BAD_SYNTAX": {
                         "count": 2,
                         "samples": [
-                            {"url": "http://a.example/", "vars": {}, "site": "a.example"}
+                            {
+                                "url": "http://a.example/",
+                                "vars": {},
+                                "site": "a.example",
+                            }
                         ],
                         "vars": {},
                     }
@@ -74,8 +80,16 @@ class TestMergeStatsDict(unittest.TestCase):
                         "count": 3,
                         "samples": [
                             # Same site, different URL -- should be deduped.
-                            {"url": "http://a.example/x", "vars": {}, "site": "a.example"},
-                            {"url": "http://b.example/", "vars": {}, "site": "b.example"},
+                            {
+                                "url": "http://a.example/x",
+                                "vars": {},
+                                "site": "a.example",
+                            },
+                            {
+                                "url": "http://b.example/",
+                                "vars": {},
+                                "site": "b.example",
+                            },
                         ],
                         "vars": {},
                     }
@@ -227,9 +241,7 @@ class TestTrimStatsDict(unittest.TestCase):
             f"h-{i}": i + 1 for i in range(TOP_K_FIELD_COUNTS + 10)
         }.keys() - stats["field_counts"].keys()
         if dropped:
-            dropped_max = max(
-                int(k.split("-")[1]) + 1 for k in dropped
-            )
+            dropped_max = max(int(k.split("-")[1]) + 1 for k in dropped)
             self.assertGreaterEqual(kept_min, dropped_max)
 
     def test_var_samples_pruned(self) -> None:
@@ -292,9 +304,7 @@ class TestMergeCspSizes(unittest.TestCase):
         target: Dict[str, int] = {}
         merge_csp_sizes(target, {"a.example": 100, "b.example": 200})
         merge_csp_sizes(target, {"a.example": 300, "c.example": 50})
-        self.assertEqual(
-            target, {"a.example": 300, "b.example": 200, "c.example": 50}
-        )
+        self.assertEqual(target, {"a.example": 300, "b.example": 200, "c.example": 50})
 
     def test_merge_keeps_zeros(self) -> None:
         # site "a" appeared with no CSP in source -> stays 0 in target
@@ -311,10 +321,51 @@ class TestMergeCspSizes(unittest.TestCase):
         self.assertEqual(len(trimmed), TOP_K_CSP_SITES)
         # The TOP_K_CSP_SITES largest sizes should survive.
         kept_min = min(trimmed.values())
-        dropped_max = max(
-            size for site, size in many.items() if site not in trimmed
-        )
+        dropped_max = max(size for site, size in many.items() if site not in trimmed)
         self.assertGreaterEqual(kept_min, dropped_max)
+
+
+class TestVaryAggregation(unittest.TestCase):
+    def _vary_payload(self, occ_recipe: str, site: str) -> Dict[str, Any]:
+        recipes = RecipeStats()
+        recipes.add(occ_recipe, site)
+        marginals = RecipeStats()
+        for token in occ_recipe.split(", "):
+            marginals.add(token, site)
+        return {
+            "responses_with_vary": 1,
+            "recipes": recipes.to_dict(),
+            "marginals": marginals.to_dict(),
+        }
+
+    def test_merge_stats_dict_vary(self) -> None:
+        target: Dict[str, Any] = {}
+        merge_stats_dict(
+            target,
+            {"total_responses": 1, "vary": self._vary_payload("a, b", "s1")},
+        )
+        merge_stats_dict(
+            target,
+            {"total_responses": 1, "vary": self._vary_payload("a, b", "s2")},
+        )
+        self.assertEqual(target["vary"]["responses_with_vary"], 2)
+        self.assertEqual(target["vary"]["recipes"]["occ"]["a, b"], 2)
+        self.assertEqual(target["vary"]["marginals"]["occ"]["a"], 2)
+
+    def test_trim_stats_dict_trims_vary(self) -> None:
+        recipes = RecipeStats()
+        for i in range(TOP_K_RECIPES + 5):
+            recipes.add(f"recipe-{i}", f"s{i}")
+        stats: Dict[str, Any] = {
+            "vary": {
+                "responses_with_vary": TOP_K_RECIPES + 5,
+                "recipes": recipes.to_dict(),
+                "marginals": {"occ": {}, "hlls": {}},
+            }
+        }
+        trim_stats_dict(stats)
+        self.assertLessEqual(len(stats["vary"]["recipes"]["occ"]), TOP_K_RECIPES)
+        self.assertTrue(stats["vary"]["recipes_truncated"])
 
 
 class TestSampleKey(unittest.TestCase):
