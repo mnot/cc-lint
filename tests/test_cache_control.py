@@ -12,10 +12,9 @@ from cc_lint.cache_control import (
     marginal_key,
     merge_cache_control,
     normalize_directive,
-    recipe_key,
-    recipe_tokens,
     trim_cache_control,
 )
+from cc_lint.recipes import recipe_key, recipe_tokens
 
 
 def _linter_with_cc(*cc_values: str) -> HttpResponseLinter:

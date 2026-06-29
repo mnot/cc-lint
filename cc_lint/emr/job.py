@@ -30,6 +30,7 @@ from mrjob.protocol import JSONProtocol  # type: ignore[import-untyped]
 
 import cc_lint
 from cc_lint.cache_control import merge_cache_control, trim_cache_control
+from cc_lint.cooccur import merge_cooccur, trim_cooccur
 from cc_lint.emr.warc_worker import (
     WarcWorkerResult,
     load_warc_worker_result,
@@ -228,6 +229,14 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     src_cc = source.get("cache_control")
     if src_cc:
         merge_cache_control(target.setdefault("cache_control", {}), src_cc)
+    src_value_histograms = source.get("value_histograms")
+    if src_value_histograms:
+        merge_value_histograms(
+            target.setdefault("value_histograms", {}), src_value_histograms
+        )
+    src_cooccur = source.get("cooccur")
+    if src_cooccur:
+        merge_cooccur(target.setdefault("cooccur", {}), src_cooccur)
 
 
 GLOBALS_KEY = "globals"
@@ -235,6 +244,8 @@ NOTE_KEY_PREFIX = "note:"
 CSP_SIZES_KEY = "csp_sizes"
 VARY_KEY = "vary"
 CACHE_CONTROL_KEY = "cache_control"
+VALUE_HISTOGRAMS_KEY = "value_histograms"
+COOCCUR_KEY = "cooccur"
 
 # Defensive cap on the per-site CSP-size dict. The dict naturally bounds at
 # the cardinality of distinct sites the mapper saw (~ TOP_N in practice),
@@ -298,6 +309,18 @@ def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     # first one we see and stick with it.
     if "run_context" not in target and source.get("run_context"):
         target["run_context"] = source["run_context"]
+
+
+def merge_value_histograms(
+    target: Dict[str, Dict[str, int]], source: Dict[str, Dict[str, int]]
+) -> None:
+    """Merge the corpus-wide numeric-header histograms (issue #8).
+
+    Each histogram is a plain bucket -> count map, so per-histogram merging is
+    a sum. Bucket cardinality is bounded by LIFETIME_BUCKETS, so there is no
+    trim path to maintain.
+    """
+    _merge_nested_counts(target, source)
 
 
 def merge_csp_sizes(target: Dict[str, int], source: Dict[str, int]) -> None:
@@ -402,6 +425,8 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
         trim_vary(stats["vary"], TOP_K_RECIPES)
     if stats.get("cache_control"):
         trim_cache_control(stats["cache_control"], TOP_K_RECIPES)
+    if stats.get("cooccur"):
+        trim_cooccur(stats["cooccur"], TOP_K_RECIPES)
     for note in stats.get("notes", {}).values():
         var_counts = note.get("vars", {})
         retained_vals_per_var: Dict[str, set[str]] = {}
@@ -709,6 +734,12 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         cache_control = stats.get("cache_control") or {}
         if cache_control:
             yield CACHE_CONTROL_KEY, cache_control
+        value_histograms = stats.get("value_histograms") or {}
+        if value_histograms:
+            yield VALUE_HISTOGRAMS_KEY, value_histograms
+        cooccur = stats.get("cooccur") or {}
+        if cooccur:
+            yield COOCCUR_KEY, cooccur
 
     # No combiner: mapper_final emits each (key, value) exactly once per
     # mapper, so there is nothing for a combiner to fold. The mrjob default
@@ -744,6 +775,17 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                 merge_cache_control(merged_cc, value)
             trim_cache_control(merged_cc, TOP_K_RECIPES)
             yield CACHE_CONTROL_KEY, merged_cc
+        elif key == VALUE_HISTOGRAMS_KEY:
+            merged_histograms: Dict[str, Dict[str, int]] = {}
+            for value in values:
+                merge_value_histograms(merged_histograms, value)
+            yield VALUE_HISTOGRAMS_KEY, merged_histograms
+        elif key == COOCCUR_KEY:
+            merged_cooccur: Dict[str, Any] = {}
+            for value in values:
+                merge_cooccur(merged_cooccur, value)
+            trim_cooccur(merged_cooccur, TOP_K_RECIPES)
+            yield COOCCUR_KEY, merged_cooccur
 
 
 def main() -> None:

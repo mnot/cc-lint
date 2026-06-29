@@ -314,6 +314,27 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Content-Security-Policy size by site", md)
         self.assertIn("| 1-99 B |", md)
 
+    def test_value_histograms_render(self) -> None:
+        data = dict(SAMPLE_STATS)
+        data["value_histograms"] = {
+            "cache_control_max_age": {"0": 5, "1-24 hours": 20, ">10 years": 1},
+            "hsts_max_age": {"1-10 years": 8, "negative": 1},
+        }
+        html, md = self._render_both(data)
+        self.assertIn("Numeric header value distributions", html)
+        self.assertIn("Cache-Control: max-age", html)
+        self.assertIn("Strict-Transport-Security: max-age", html)
+        self.assertIn("&gt;10 years", html)  # bucket label HTML-escaped
+        # Same content in markdown, with the histograms as subsections.
+        self.assertIn("## Numeric header value distributions", md)
+        self.assertIn("### Cache-Control: max-age", md)
+        self.assertIn("| 1-24 hours |", md)
+
+    def test_no_value_histograms_section_absent(self) -> None:
+        html, md = self._render_both(dict(SAMPLE_STATS))
+        self.assertNotIn("Numeric header value distributions", html)
+        self.assertNotIn("Numeric header value distributions", md)
+
     def test_health_summary_renders(self) -> None:
         data = dict(SAMPLE_STATS)
         data["severity_counts"] = {
@@ -424,6 +445,44 @@ class TestRenderer(unittest.TestCase):
     def test_no_cache_control_section_absent(self) -> None:
         html = self._render({"total_responses": 5, "notes": {}})
         self.assertNotIn('id="cache-control"', html)
+
+    def test_cooccur_section_rendered(self) -> None:
+        bundle = "strict-transport-security, x-content-type-options"
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "cooccur": {
+                "responses": 100,
+                "bundles": {
+                    "occ": {bundle: 60, "(none)": 30, "x-content-type-options": 10},
+                    "hlls": {},
+                },
+                "marginals": {
+                    "occ": {
+                        "strict-transport-security": 60,
+                        "x-content-type-options": 70,
+                    },
+                    "hlls": {},
+                },
+                "pairs": {"occ": {bundle: 60}, "hlls": {}},
+                "by_layer": {bundle: {"cloudflare": 60}, "(none)": {"nginx": 30}},
+            },
+        }
+        html, md = self._render_both(data)
+        self.assertIn('id="cooccur"', html)
+        self.assertIn("Header co-occurrence", html)
+        self.assertIn("## Header co-occurrence", md)
+        # The no-security-headers headline and the modal-by-layer view appear.
+        self.assertIn("no</strong> security header", html)
+        self.assertIn("Default header set by infrastructure", html)
+        self.assertIn("Default header set by infrastructure", md)
+        # The conditional-lift table surfaces the bundled pair in both.
+        self.assertIn("Conditional lifts", html)
+        self.assertIn("strict-transport-security", md)
+
+    def test_no_cooccur_section_absent(self) -> None:
+        html = self._render({"total_responses": 5, "notes": {}})
+        self.assertNotIn('id="cooccur"', html)
 
     def test_url_escaping(self) -> None:
         bad = {

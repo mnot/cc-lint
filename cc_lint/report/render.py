@@ -17,6 +17,7 @@ from cc_lint.report.sections import (
     render_asn_section,
     render_cache_control_section,
     render_category_overview,
+    render_cooccur_section,
     render_csp_section,
     render_field_counts_section,
     render_header_stats,
@@ -26,6 +27,7 @@ from cc_lint.report.sections import (
     render_notes_section,
     render_run_context,
     render_unprocessed_section,
+    render_value_histograms_section,
     render_vary_section,
 )
 from cc_lint.report.severity import (
@@ -66,6 +68,7 @@ def _build_html(data: Dict[str, Any]) -> str:
     severity_counts = data.get("severity_counts") or {}
     vary = data.get("vary") or {}
     cache_control = data.get("cache_control") or {}
+    cooccur = data.get("cooccur") or {}
 
     layer_counts: Dict[str, int] = data.get("layer_counts") or {}
     field_counts_by_layer: Dict[str, Dict[str, int]] = (
@@ -116,8 +119,10 @@ def _build_html(data: Dict[str, Any]) -> str:
             bool(data.get("truncated_asn_counts")),
         ),
         render_csp_section(csp_sizes),
+        render_value_histograms_section(data.get("value_histograms") or {}),
         render_vary_section(vary),
         render_cache_control_section(cache_control),
+        render_cooccur_section(cooccur, layer_roles),
         render_unprocessed_section(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         ),

@@ -34,10 +34,30 @@ from cc_lint.hll import HLL_P_PER_NOTE, hll_add, hll_merge, make_registers
 
 # The two sub-dicts every recipe *block* (a serialized header view) carries: a
 # high-cardinality recipe dict and a bounded marginal dict, each a recipe dict
-# in the {"occ": ..., "hlls": ...} shape above. Both ``cc_lint.vary`` and
-# ``cc_lint.cache_control`` serialize to this shape, so the block-level merge
-# and trim live here once.
+# in the {"occ": ..., "hlls": ...} shape above. ``cc_lint.vary``,
+# ``cc_lint.cache_control``, and ``cc_lint.cooccur`` serialize to this shape,
+# so the block-level merge and trim live here once.
 RECIPE_BLOCK_SUBKEYS: Tuple[str, ...] = ("recipes", "marginals")
+
+# The canonical separator between tokens in a recipe string. A recipe is the
+# sorted, deduped, ``", "``-joined set of its tokens (Vary field-names,
+# co-occurring header names, …). These two helpers are the generic
+# string<->token bridge shared by every recipe-flavoured view; the
+# header-specific normalisation (which tokens count, how they're classified)
+# lives in the per-header modules (``cc_lint.vary``, ``cc_lint.cooccur``).
+RECIPE_SEPARATOR = ", "
+
+
+def recipe_key(tokens: List[str]) -> str:
+    """Canonical recipe string: deduped, sorted, ``", "``-joined."""
+    return RECIPE_SEPARATOR.join(sorted(set(tokens)))
+
+
+def recipe_tokens(recipe: str) -> List[str]:
+    """Split a canonical recipe string back into its tokens."""
+    if not recipe:
+        return []
+    return recipe.split(RECIPE_SEPARATOR)
 
 
 class RecipeStats:

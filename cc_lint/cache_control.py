@@ -39,13 +39,11 @@ from typing import Any, Dict, List
 
 from httplint.field.parsers.cache_control import KNOWN_CC
 
-from cc_lint.recipes import merge_recipe_block, trim_recipe_block
+from cc_lint.recipes import merge_recipe_block, recipe_tokens, trim_recipe_block
 
 # The serialized block's response-count scalar (the denominator for "% of
 # Cache-Control"). Named distinctly from Vary's so the two blocks never alias.
 COUNT_FIELD = "responses_with_cc"
-
-RECIPE_SEPARATOR = ", "
 
 # Placeholder for an elided directive value. httplint hands us the parsed
 # value (int for max-age et al., the unquoted string for no-cache/private,
@@ -103,23 +101,6 @@ def cc_directives(linter: Any) -> List[str]:
             continue
         tokens.append(normalize_directive(name, directive_value))
     return tokens
-
-
-def recipe_key(tokens: List[str]) -> str:
-    """Canonical recipe string: deduped, sorted, ``", "``-joined.
-
-    Deduping collapses a repeated directive (``max-age=5, max-age=10`` ->
-    both ``max-age=N`` -> one token); the duplication itself is tracked
-    separately by the ``CC_DUP`` note.
-    """
-    return RECIPE_SEPARATOR.join(sorted(set(tokens)))
-
-
-def recipe_tokens(recipe: str) -> List[str]:
-    """Split a canonical recipe string back into its tokens."""
-    if not recipe:
-        return []
-    return recipe.split(RECIPE_SEPARATOR)
 
 
 def marginal_key(token: str) -> str:

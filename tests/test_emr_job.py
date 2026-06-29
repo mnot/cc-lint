@@ -15,6 +15,7 @@ from cc_lint.emr.job import (
     merge_globals,
     merge_note,
     merge_stats_dict,
+    merge_value_histograms,
     sample_key,
     trim_stats_dict,
 )
@@ -124,6 +125,7 @@ class TestMergeStatsDict(unittest.TestCase):
                 "sites_hll": first_hll,
                 "csp_max_by_site": {"a.example": 100},
                 "severity_counts": {"warn": 30, "clean": 20},
+                "value_histograms": {"age": {"1-10 min": 3, "0": 1}},
                 "vary": {
                     "responses_with_vary": 4,
                     "recipes": {"occ": {"accept-encoding": 4}, "hlls": {}},
@@ -133,6 +135,13 @@ class TestMergeStatsDict(unittest.TestCase):
                     "responses_with_cc": 4,
                     "recipes": {"occ": {"max-age=N, public": 4}, "hlls": {}},
                     "marginals": {"occ": {"max-age": 4, "public": 4}, "hlls": {}},
+                },
+                "cooccur": {
+                    "responses": 50,
+                    "bundles": {"occ": {"(none)": 40, "x-frame-options": 10}},
+                    "marginals": {"occ": {"x-frame-options": 10}},
+                    "pairs": {"occ": {}},
+                    "by_layer": {"x-frame-options": {"cloudflare": 10}},
                 },
             },
         )
@@ -146,6 +155,10 @@ class TestMergeStatsDict(unittest.TestCase):
                 "sites_hll": second_hll,
                 "csp_max_by_site": {"a.example": 500, "b.example": 200},
                 "severity_counts": {"warn": 10, "info": 15, "clean": 5},
+                "value_histograms": {
+                    "age": {"1-10 min": 2},
+                    "hsts_max_age": {"1-10 years": 4},
+                },
                 "vary": {
                     "responses_with_vary": 2,
                     "recipes": {"occ": {"accept-encoding": 1, "cookie": 1}, "hlls": {}},
@@ -164,6 +177,13 @@ class TestMergeStatsDict(unittest.TestCase):
                         "occ": {"max-age": 1, "public": 1, "no-store": 1},
                         "hlls": {},
                     },
+                },
+                "cooccur": {
+                    "responses": 30,
+                    "bundles": {"occ": {"(none)": 20, "x-frame-options": 10}},
+                    "marginals": {"occ": {"x-frame-options": 10}},
+                    "pairs": {"occ": {}},
+                    "by_layer": {"x-frame-options": {"cloudflare": 5, "nginx": 5}},
                 },
             },
         )
@@ -204,6 +224,46 @@ class TestMergeStatsDict(unittest.TestCase):
         self.assertEqual(
             target["cache_control"]["marginals"]["occ"],
             {"max-age": 5, "public": 5, "no-store": 1},
+        )
+        # Value histograms (issue #8) survive: buckets sum per histogram and
+        # a histogram seen in only one fold still carries through.
+        self.assertEqual(
+            target["value_histograms"],
+            {
+                "age": {"1-10 min": 5, "0": 1},
+                "hsts_max_age": {"1-10 years": 4},
+            },
+        )
+        # cooccur block survives: responses sum, bundle/marginal occ merge, and
+        # by_layer (bundle -> layer -> count) merges across both folds.
+        self.assertEqual(target["cooccur"]["responses"], 80)
+        self.assertEqual(
+            target["cooccur"]["bundles"]["occ"],
+            {"(none)": 60, "x-frame-options": 20},
+        )
+        self.assertEqual(target["cooccur"]["marginals"]["occ"], {"x-frame-options": 20})
+        self.assertEqual(
+            target["cooccur"]["by_layer"]["x-frame-options"],
+            {"cloudflare": 15, "nginx": 5},
+        )
+
+
+class TestMergeValueHistograms(unittest.TestCase):
+    def test_buckets_sum_per_histogram(self) -> None:
+        target: Dict[str, Dict[str, int]] = {}
+        merge_value_histograms(
+            target, {"age": {"1-10 min": 2}, "cache_control_max_age": {"0": 1}}
+        )
+        merge_value_histograms(
+            target,
+            {"age": {"1-10 min": 3, ">10 years": 1}, "cache_control_max_age": {"0": 4}},
+        )
+        self.assertEqual(
+            target,
+            {
+                "age": {"1-10 min": 5, ">10 years": 1},
+                "cache_control_max_age": {"0": 5},
+            },
         )
 
 

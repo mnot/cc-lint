@@ -1,18 +1,16 @@
 from collections import Counter
-from typing import Any, Dict, Iterator, List, Optional, Set
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 from httplint.field.finder import UnknownHttpField
 from httplint.message import HttpResponseLinter
 from httplint.note import Note, levels
 
 from cc_lint.cache_control import COUNT_FIELD as CC_COUNT_FIELD
-from cc_lint.cache_control import (
-    cc_directives,
-)
+from cc_lint.cache_control import cc_directives
 from cc_lint.cache_control import marginal_key as cc_marginal_key
-from cc_lint.cache_control import recipe_key as cc_recipe_key
+from cc_lint.cooccur import bundle_key, pair_keys, present_security_headers
 from cc_lint.fingerprint import UNMATCHED, Fingerprinter, default_fingerprinter
-from cc_lint.histograms import byte_bucket, duration_bucket
+from cc_lint.histograms import byte_bucket, duration_bucket, lifetime_bucket
 from cc_lint.hll import (
     HLL_P_GLOBAL,
     HLL_P_PER_NOTE,
@@ -21,10 +19,10 @@ from cc_lint.hll import (
     make_registers,
 )
 from cc_lint.ipasn import IpAsnTable
-from cc_lint.recipes import RecipeStats
+from cc_lint.recipes import RecipeStats, recipe_key
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
-from cc_lint.vary import ASTERISK, recipe_key, vary_tokens
+from cc_lint.vary import ASTERISK, vary_tokens
 
 
 def _level_to_severity(level: Any) -> Optional[str]:
@@ -257,6 +255,125 @@ def iter_collected_samples(
                         yield var_name, val_str, sample
 
 
+# --- corpus-wide numeric-header histograms (issue #8) ----------------------
+#
+# Unlike the note-gated histograms above (which live under a note's vars and
+# only fire when that note fires), these tabulate a numeric/temporal header
+# value across *every* response that carries the field, so the report can make
+# the caching / cookie / HSTS story quantitative ("median max-age is X").
+#
+# Each spec is (name, extractor, bucketer). The extractor reads already-parsed
+# values off the finished linter -- httplint stores them on
+# ``linter.headers.parsed`` and ``linter.caching``, so we never re-parse -- and
+# yields zero or more numeric values; each is bucketed and counted. Yielding
+# nothing (field absent, session cookie, unparseable value) simply contributes
+# nothing. All seven share the lifetime scale; the per-spec bucketer keeps the
+# registry extensible to other numeric headers (e.g. a byte-scaled one) later.
+
+
+def _cc_directive_value(linter: HttpResponseLinter, directive: str) -> Iterator[float]:
+    """Yield the numeric value of a Cache-Control directive, if integer."""
+    for name, value in linter.headers.parsed.get("cache-control") or []:
+        if name == directive and isinstance(value, int) and not isinstance(value, bool):
+            yield float(value)
+
+
+def _extract_cc_max_age(linter: HttpResponseLinter) -> Iterator[float]:
+    return _cc_directive_value(linter, "max-age")
+
+
+def _extract_cc_s_maxage(linter: HttpResponseLinter) -> Iterator[float]:
+    return _cc_directive_value(linter, "s-maxage")
+
+
+def _extract_age(linter: HttpResponseLinter) -> Iterator[float]:
+    value = linter.headers.parsed.get("age")
+    if isinstance(value, int) and not isinstance(value, bool):
+        yield float(value)
+
+
+def _extract_hsts_max_age(linter: HttpResponseLinter) -> Iterator[float]:
+    sts = linter.headers.parsed.get("strict-transport-security")
+    if isinstance(sts, dict):
+        value = sts.get("max-age")
+        if isinstance(value, int) and not isinstance(value, bool):
+            yield float(value)
+
+
+def _extract_cookie_lifetime(linter: HttpResponseLinter) -> Iterator[float]:
+    """Yield a persistence lifetime per cookie that declares one.
+
+    httplint normalizes ``Max-Age`` to integer seconds and ``Expires`` to a
+    Unix timestamp. Max-Age wins when both are present (RFC 6265). Session
+    cookies (neither attribute) declare no lifetime and are skipped. The
+    Expires reference is the crawl time (``linter.start_time``).
+    """
+    reference = getattr(linter, "start_time", None)
+    for cookie in linter.headers.parsed.get("set-cookie") or []:
+        if not (isinstance(cookie, (list, tuple)) and len(cookie) >= 3):
+            continue
+        attrs = dict(cookie[2] or [])
+        max_age = attrs.get("Max-Age")
+        expires = attrs.get("Expires")
+        if isinstance(max_age, int) and not isinstance(max_age, bool):
+            yield float(max_age)
+        elif (
+            isinstance(expires, int)
+            and not isinstance(expires, bool)
+            and reference is not None
+        ):
+            yield float(expires - int(reference))
+
+
+def _extract_freshness_lifetime(linter: HttpResponseLinter) -> Iterator[float]:
+    """Yield httplint's computed freshness lifetime for explicitly-fresh responses.
+
+    ``freshness_lifetime_private`` unifies max-age and Expires-derived
+    freshness into one effective lifetime. Gated on ``has_explicit_freshness``
+    so the histogram isn't swamped by zeros from the majority of responses that
+    carry no caching headers.
+    """
+    caching = getattr(linter, "caching", None)
+    if caching is not None and getattr(caching, "has_explicit_freshness", False):
+        yield float(caching.freshness_lifetime_private)
+
+
+def _extract_expires_date_delta(linter: HttpResponseLinter) -> Iterator[float]:
+    """Yield the Expires - Date delta (the freshness an Expires header alone declares).
+
+    Falls back to the crawl time when Date is absent. A negative delta (Expires
+    predates Date) is meaningful -- stale on arrival -- and lands in the
+    "negative" bucket rather than being discarded.
+    """
+    caching = getattr(linter, "caching", None)
+    if caching is None:
+        return
+    expires = getattr(caching, "expires_value", None)
+    if not isinstance(expires, int) or isinstance(expires, bool):
+        return
+    reference = getattr(caching, "date_value", None)
+    if not isinstance(reference, int) or isinstance(reference, bool):
+        reference = getattr(linter, "start_time", None)
+    if reference is None:
+        return
+    yield float(expires - int(reference))
+
+
+ValueHistogramSpec = Tuple[
+    str, Callable[[HttpResponseLinter], Iterable[float]], Callable[[float], str]
+]
+
+VALUE_HISTOGRAMS: List[ValueHistogramSpec] = [
+    ("cache_control_max_age", _extract_cc_max_age, lifetime_bucket),
+    ("cache_control_s_maxage", _extract_cc_s_maxage, lifetime_bucket),
+    ("age", _extract_age, lifetime_bucket),
+    ("hsts_max_age", _extract_hsts_max_age, lifetime_bucket),
+    ("cookie_lifetime", _extract_cookie_lifetime, lifetime_bucket),
+    ("freshness_lifetime", _extract_freshness_lifetime, lifetime_bucket),
+    ("expires_date_delta", _extract_expires_date_delta, lifetime_bucket),
+]
+
+
 class StatsCollector:
     def __init__(
         self,
@@ -326,6 +443,24 @@ class StatsCollector:
         self.responses_with_cc = 0
         self.cc_recipes = RecipeStats(HLL_P_RECIPE)
         self.cc_marginals = RecipeStats(HLL_P_PER_NOTE)
+        # Corpus-wide numeric-header histograms (issue #8): name -> bucket
+        # label -> occurrence count. Plain counters, so they merge by summing
+        # and cost almost nothing in shuffle (a handful of histograms, each
+        # bounded by LIFETIME_BUCKETS).
+        self.value_histograms: Dict[str, Counter[str]] = {}
+        # Security-header co-occurrence (issue #6). A bundle is the subset of
+        # the curated security/policy alphabet present on a response (the
+        # empty bundle counts -- "no security headers at all" is a headline).
+        # Bundles and pairs are alphabet-bounded but multiply by present-set
+        # cardinality, so their site HLLs use the coarse HLL_P_RECIPE; the
+        # per-header marginals are bounded (<= len(alphabet)) and carry the
+        # conditional-lift denominators, so they keep HLL_P_PER_NOTE. by_layer
+        # is plain occurrence counts (bundle -> layer), the infra-conditioning
+        # dimension, mirroring field_counts_by_layer.
+        self.cooccur_bundles = RecipeStats(HLL_P_RECIPE)
+        self.cooccur_marginals = RecipeStats(HLL_P_PER_NOTE)
+        self.cooccur_pairs = RecipeStats(HLL_P_RECIPE)
+        self.cooccur_by_layer: Dict[str, Counter[str]] = {}
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -372,6 +507,18 @@ class StatsCollector:
         self._process_headers(header_items, linter, site, layers)
         self._process_vary(linter, site)
         self._process_cache_control(linter, site)
+        self._process_value_histograms(linter)
+        self._process_cooccur(header_items, site, layers)
+
+    def _process_value_histograms(self, linter: HttpResponseLinter) -> None:
+        """Tabulate the corpus-wide numeric-header histograms (issue #8)."""
+        for name, extractor, bucketer in VALUE_HISTOGRAMS:
+            for value in extractor(linter):
+                try:
+                    label = bucketer(value)
+                except (TypeError, ValueError):
+                    continue
+                self.value_histograms.setdefault(name, Counter())[label] += 1
 
     def _fingerprint(
         self,
@@ -425,9 +572,35 @@ class StatsCollector:
         if not tokens:
             return
         self.responses_with_cc += 1
-        self.cc_recipes.add(cc_recipe_key(tokens), site)
+        self.cc_recipes.add(recipe_key(tokens), site)
         for directive in {cc_marginal_key(token) for token in tokens}:
             self.cc_marginals.add(directive, site)
+
+    def _process_cooccur(
+        self,
+        header_items: List[tuple[str, Any]],
+        site: Optional[str],
+        layers: Set[str],
+    ) -> None:
+        """Tabulate security-header co-occurrence for one response (issue #6).
+
+        ``header_items`` is the shared pre-lowercased (name, value) list. The
+        bundle is the present subset of the curated alphabet (``(none)`` when
+        empty); marginals and pairs cover only the headers actually present.
+        Every response contributes exactly one bundle, so the per-occurrence
+        denominator is total_responses (read back in ``to_dict``).
+        """
+        present = present_security_headers(name for name, _ in header_items)
+        bundle = bundle_key(present)
+        self.cooccur_bundles.add(bundle, site)
+        for name in present:
+            self.cooccur_marginals.add(name, site)
+        for pair in pair_keys(present):
+            self.cooccur_pairs.add(pair, site)
+        if layers:
+            per_layer = self.cooccur_by_layer.setdefault(bundle, Counter())
+            for layer in layers:
+                per_layer[layer] += 1
 
     def _process_note(
         self,
@@ -594,6 +767,10 @@ class StatsCollector:
             },
             "asn_counts": dict(self.asn_counts),
         }
+        if self.value_histograms:
+            result["value_histograms"] = {
+                name: dict(counter) for name, counter in self.value_histograms.items()
+            }
         if self.responses_with_vary:
             result["vary"] = {
                 "responses_with_vary": self.responses_with_vary,
@@ -605,5 +782,16 @@ class StatsCollector:
                 CC_COUNT_FIELD: self.responses_with_cc,
                 "recipes": self.cc_recipes.to_dict(),
                 "marginals": self.cc_marginals.to_dict(),
+            }
+        if self.total_responses:
+            result["cooccur"] = {
+                "responses": self.total_responses,
+                "bundles": self.cooccur_bundles.to_dict(),
+                "marginals": self.cooccur_marginals.to_dict(),
+                "pairs": self.cooccur_pairs.to_dict(),
+                "by_layer": {
+                    bundle: dict(layers)
+                    for bundle, layers in self.cooccur_by_layer.items()
+                },
             }
         return result

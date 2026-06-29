@@ -36,15 +36,19 @@ import sys
 from typing import Any, Dict, Iterator, Tuple
 
 from cc_lint.cache_control import merge_cache_control
+from cc_lint.cooccur import merge_cooccur
 from cc_lint.emr.job import (
     CACHE_CONTROL_KEY,
+    COOCCUR_KEY,
     CSP_SIZES_KEY,
     GLOBALS_KEY,
     NOTE_KEY_PREFIX,
+    VALUE_HISTOGRAMS_KEY,
     VARY_KEY,
     merge_csp_sizes,
     merge_globals,
     merge_note,
+    merge_value_histograms,
     trim_stats_dict,
 )
 from cc_lint.report import default_markdown_path, render_report
@@ -93,6 +97,10 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
             merge_vary(merged.setdefault("vary", {}), value)
         elif key == CACHE_CONTROL_KEY:
             merge_cache_control(merged.setdefault("cache_control", {}), value)
+        elif key == VALUE_HISTOGRAMS_KEY:
+            merge_value_histograms(merged.setdefault("value_histograms", {}), value)
+        elif key == COOCCUR_KEY:
+            merge_cooccur(merged.setdefault("cooccur", {}), value)
         else:
             print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
 

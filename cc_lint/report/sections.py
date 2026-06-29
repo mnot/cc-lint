@@ -16,13 +16,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.cache_control import COUNT_FIELD as CC_COUNT_FIELD
 from cc_lint.cache_control import count_nonstandard as cc_count_nonstandard
-from cc_lint.cache_control import (
-    is_nonstandard_directive,
+from cc_lint.cache_control import is_nonstandard_directive
+from cc_lint.cooccur import (
+    EMPTY_BUNDLE_LABEL,
+    conditional_lifts,
+    empty_bundle_count,
+    layer_default_bundles,
+    ranked_bundles,
+    ranked_marginals,
 )
-from cc_lint.cache_control import recipe_tokens as cc_recipe_tokens
 from cc_lint.fingerprint import UNMATCHED
-from cc_lint.histograms import bucket_order
+from cc_lint.histograms import LIFETIME_BUCKET_ORDER, bucket_order
 from cc_lint.hll import hll_estimate
+from cc_lint.recipes import recipe_tokens
 from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
 from cc_lint.vary import (
@@ -33,7 +39,6 @@ from cc_lint.vary import (
     factor_out,
     is_nonstandard_token,
     is_registered_field,
-    recipe_tokens,
 )
 
 REDBOT_BASE = "https://redbot.org/check?uri="
@@ -786,6 +791,76 @@ def render_csp_section(csp_sizes: Dict[str, int]) -> str:
     )
 
 
+# ---- numeric header value histograms (issue #8) ---------------------------
+
+# Ordered (key, heading) pairs for the corpus-wide numeric-header histograms.
+# Order and labels mirror cc_lint.stats.VALUE_HISTOGRAMS; markdown.py keeps an
+# identical list so the two renderers stay in sync.
+_VALUE_HISTOGRAM_LABELS: List[Tuple[str, str]] = [
+    ("cache_control_max_age", "Cache-Control: max-age"),
+    ("cache_control_s_maxage", "Cache-Control: s-maxage"),
+    ("age", "Age"),
+    ("hsts_max_age", "Strict-Transport-Security: max-age"),
+    ("cookie_lifetime", "Cookie lifetime (Max-Age / Expires)"),
+    ("freshness_lifetime", "Computed freshness lifetime"),
+    ("expires_date_delta", "Expires − Date delta"),
+]
+
+
+def _render_value_histogram_table(heading: str, counts: Dict[str, int]) -> str:
+    total = sum(counts.values())
+    if total == 0:
+        return ""
+    rows: List[str] = []
+    for label in LIFETIME_BUCKET_ORDER:
+        count = counts.get(label, 0)
+        pct = count / total * 100  # total > 0: guarded above
+        bar_width = int(pct * 2)  # 200px max
+        rows.append(
+            f"<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{_format_count(count)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f'<td><span class="csp-bar" style="width:{bar_width}px"></span></td>'
+            f"</tr>"
+        )
+    return (
+        f"<h3>{html.escape(heading)}</h3>"
+        f'<p class="muted">Total occurrences: {_format_count(total)}.</p>'
+        '<table class="data-table csp-table">'
+        "<thead><tr><th>Value</th><th>Occurrences</th><th>%</th>"
+        "<th></th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def render_value_histograms_section(value_histograms: Dict[str, Dict[str, int]]) -> str:
+    """Corpus-wide distributions of numeric/temporal header values (issue #8)."""
+    if not value_histograms:
+        return ""
+    tables = [
+        _render_value_histogram_table(heading, value_histograms[key])
+        for key, heading in _VALUE_HISTOGRAM_LABELS
+        if value_histograms.get(key)
+    ]
+    tables = [t for t in tables if t]
+    if not tables:
+        return ""
+    return (
+        '<section id="value-histograms">'
+        "<h2>Numeric header value distributions</h2>"
+        '<p class="muted">Per-occurrence distributions of numeric and temporal '
+        "header values across all analysed responses that carried the field. "
+        "Lifetimes use a shared log-scaled bucket set, so the histograms are "
+        'comparable. The "negative" bucket holds anomalies (a value that '
+        "parsed negative, or an Expires that predates Date — stale on "
+        'arrival); "0" is a distinct deliberate "do not reuse" signal.</p>'
+        f"{''.join(tables)}"
+        "</section>"
+    )
+
+
 def _render_field_by_layer(
     field_counts_by_layer: Dict[str, Dict[str, int]],
     field_counts: Dict[str, int],
@@ -1154,7 +1229,7 @@ def _pct_of_cc(count: int, denom: int) -> str:
 
 def _cc_recipe_label_html(recipe: str) -> str:
     parts: List[str] = []
-    for token in cc_recipe_tokens(recipe):
+    for token in recipe_tokens(recipe):
         escaped = html.escape(token)
         if is_nonstandard_directive(token):
             parts.append(
@@ -1238,6 +1313,49 @@ def _render_cc_marginal_table(
     )
 
 
+# ---- header co-occurrence --------------------------------------------------
+
+
+def _cooccur_pct(count: int, denom: int) -> str:
+    return f"{count / denom * 100:.2f}%" if denom else "—"
+
+
+def _bundle_label_html(bundle: str) -> str:
+    if bundle == EMPTY_BUNDLE_LABEL:
+        return f"<em>{html.escape(bundle)}</em>"
+    return html.escape(bundle)
+
+
+def _render_bundle_table(
+    bundles: List[Tuple[str, int]], hlls: Dict[str, Any], denom: int
+) -> str:
+    if not bundles:
+        return '<p class="muted">No data.</p>'
+    head = ["Bundle", "Responses", "% of responses", "Sites"]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for bundle, count in bundles[:25]:
+        sites = _hll_sites(hlls, bundle)
+        cells = [
+            _bundle_label_html(bundle),
+            _format_count(count),
+            _cooccur_pct(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+        ]
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    if len(bundles) > 25:
+        rows.append(
+            f'<tr><td colspan="{len(head)}" class="muted">'
+            f"… {len(bundles) - 25} more bundles not shown …</td></tr>"
+        )
+    return (
+        '<table class="data-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
 def render_cache_control_section(cache_control: Dict[str, Any]) -> str:
     """Render the Cache-Control recipe section (issue #9)."""
     if not cache_control:
@@ -1300,6 +1418,146 @@ def render_cache_control_section(cache_control: Dict[str, Any]) -> str:
     return (
         '<section id="cache-control">'
         "<h2>Cache-Control recipes</h2>"
+        f"{''.join(blocks)}"
+        "</section>"
+    )
+
+
+def _render_marginal_prevalence(
+    marginals: List[Tuple[str, int]], hlls: Dict[str, Any], denom: int
+) -> str:
+    if not marginals:
+        return '<p class="muted">None observed.</p>'
+    head = ["Header", "Responses", "% of responses", "Sites"]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for name, count in marginals:
+        sites = _hll_sites(hlls, name)
+        cells = [
+            html.escape(name),
+            _format_count(count),
+            _cooccur_pct(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+        ]
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    return (
+        '<table class="data-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def _render_lift_table(lifts: List[Dict[str, Any]]) -> str:
+    if not lifts:
+        return '<p class="muted">No co-occurring pairs observed.</p>'
+    head = ["Header A", "Header B", "Co-occurrences", "P(A|B)", "P(B|A)", "Lift"]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for row in lifts:
+        cells = [
+            html.escape(str(row["a"])),
+            html.escape(str(row["b"])),
+            _format_count(int(row["joint"])),
+            f"{row['p_a_given_b'] * 100:.1f}%",
+            f"{row['p_b_given_a'] * 100:.1f}%",
+            f"{row['lift']:.1f}×" if row["lift"] else "—",
+        ]
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    return (
+        '<table class="data-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def _render_layer_defaults(
+    layer_defaults: List[Dict[str, Any]], roles: Dict[str, str]
+) -> str:
+    if not layer_defaults:
+        return '<p class="muted">No fingerprinted responses to condition on.</p>'
+    head = ["Layer", "Role", "Responses", "Default bundle", "Share"]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for row in layer_defaults[:25]:
+        layer = str(row["layer"])
+        cells = [
+            html.escape(layer),
+            html.escape(roles.get(layer, "")) or "—",
+            _format_count(int(row["responses"])),
+            _bundle_label_html(str(row["bundle"])),
+            f"{row['share'] * 100:.1f}%",
+        ]
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    return (
+        '<table class="data-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def render_cooccur_section(cooccur: Dict[str, Any], roles: Dict[str, str]) -> str:
+    """Render the header co-occurrence section (issue #6)."""
+    if not cooccur:
+        return ""
+    denom = int(cooccur.get("responses", 0))
+    if denom <= 0:
+        return ""
+    bundles_dict: Dict[str, Any] = cooccur.get("bundles") or {}
+    bundle_hlls: Dict[str, Any] = bundles_dict.get("hlls", {})
+    marginals_dict: Dict[str, Any] = cooccur.get("marginals") or {}
+    marg_hlls: Dict[str, Any] = marginals_dict.get("hlls", {})
+
+    none_count = empty_bundle_count(cooccur)
+    blocks: List[str] = [
+        '<p class="muted">Which security / policy response headers travel '
+        "together. A <strong>bundle</strong> is the set of those headers "
+        "present on a response (drawn from a fixed curated alphabet); "
+        f"<em>{html.escape(EMPTY_BUNDLE_LABEL)}</em> means none were present. "
+        "<em>Responses</em> is occurrence-weighted (one CDN origin can emit a "
+        "bundle across millions of responses); <em>Sites</em> is a "
+        "HyperLogLog estimate of distinct operators. Shares are of all "
+        f"{_format_count(denom)} analysed responses.</p>",
+        '<p class="cooccur-headline">'
+        f"<strong>{_cooccur_pct(none_count, denom)}</strong> of responses "
+        f"({_format_count(none_count)}) carried <strong>no</strong> security "
+        "header from the tracked set.</p>",
+        "<h3>Top header bundles</h3>",
+    ]
+    if cooccur.get("bundles_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    blocks.append(_render_bundle_table(ranked_bundles(cooccur), bundle_hlls, denom))
+    blocks.append(
+        "<h3>Conditional lifts</h3>"
+        '<p class="muted">For the most common co-occurring pairs: '
+        "<code>P(A|B)</code> is the share of responses carrying B that also "
+        "carry A. <strong>Lift</strong> &gt; 1 means the two appear together "
+        "more than independent prevalence predicts &mdash; the bundling "
+        "signal.</p>"
+    )
+    blocks.append(_render_lift_table(conditional_lifts(cooccur, 25)))
+    blocks.append("<h3>Per-header prevalence</h3>")
+    if cooccur.get("marginals_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    blocks.append(
+        _render_marginal_prevalence(ranked_marginals(cooccur), marg_hlls, denom)
+    )
+    blocks.append(
+        "<h3>Default header set by infrastructure</h3>"
+        '<p class="muted">Each fingerprint layer\'s <strong>modal</strong> '
+        "bundle &mdash; the single most common security-header set among the "
+        "responses attributed to it &mdash; and that bundle's share of the "
+        "layer's fingerprinted responses. This is where defaultability shows: "
+        "a high share means the platform ships that set by default. Layers "
+        "overlap (a response can match several).</p>"
+    )
+    blocks.append(_render_layer_defaults(layer_default_bundles(cooccur), roles))
+
+    return (
+        '<section id="cooccur">'
+        "<h2>Header co-occurrence</h2>"
         f"{''.join(blocks)}"
         "</section>"
     )
