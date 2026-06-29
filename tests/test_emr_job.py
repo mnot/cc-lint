@@ -124,6 +124,9 @@ class TestMergeStatsDict(unittest.TestCase):
                 "unprocessed_counts": {},
                 "sites_hll": first_hll,
                 "csp_max_by_site": {"a.example": 100},
+                "field_bytes": {"date": 1500, "set-cookie": 4000},
+                "header_block_hist": {"<256 B": 30, "256-1023 B": 20},
+                "total_header_bytes": 60000,
                 "severity_counts": {"warn": 30, "clean": 20},
                 "value_histograms": {"age": {"1-10 min": 3, "0": 1}},
                 "vary": {
@@ -163,6 +166,9 @@ class TestMergeStatsDict(unittest.TestCase):
                 "unprocessed_counts": {},
                 "sites_hll": second_hll,
                 "csp_max_by_site": {"a.example": 500, "b.example": 200},
+                "field_bytes": {"date": 900, "server": 700},
+                "header_block_hist": {"<256 B": 10, "1-4 KB": 5},
+                "total_header_bytes": 40000,
                 "severity_counts": {"warn": 10, "info": 15, "clean": 5},
                 "value_histograms": {
                     "age": {"1-10 min": 2},
@@ -217,6 +223,17 @@ class TestMergeStatsDict(unittest.TestCase):
             target["csp_max_by_site"],
             {"a.example": 500, "b.example": 200},
         )
+        # Header byte economics (issue #10): per-header byte totals and the
+        # block-size histogram sum, and total_header_bytes is an exact scalar.
+        self.assertEqual(
+            target["field_bytes"],
+            {"date": 2400, "set-cookie": 4000, "server": 700},
+        )
+        self.assertEqual(
+            target["header_block_hist"],
+            {"<256 B": 40, "256-1023 B": 20, "1-4 KB": 5},
+        )
+        self.assertEqual(target["total_header_bytes"], 100000)
         # HLL is unioned register-wise; the two disjoint adds give two
         # distinct sites in the merged register state.
         self.assertIn("sites_hll", target)

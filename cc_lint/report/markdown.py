@@ -28,7 +28,12 @@ from cc_lint.cooccur import (
     ranked_marginals,
 )
 from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
-from cc_lint.histograms import LIFETIME_BUCKET_ORDER, bucket_order
+from cc_lint.header_categories import categorize_header_bytes
+from cc_lint.histograms import (
+    BYTE_BUCKET_ORDER,
+    LIFETIME_BUCKET_ORDER,
+    bucket_order,
+)
 from cc_lint.hll import hll_estimate
 from cc_lint.recipes import recipe_tokens
 from cc_lint.report.severity import (
@@ -459,6 +464,118 @@ def _render_field_counts(
         pct = (count / total_responses * 100) if total_responses else 0
         lines.append(f"| {_md_escape_pipe(name)} | {_fmt_count(count)} | {pct:.1f}% |")
     lines.append("")
+    return lines
+
+
+# Human labels + callouts for the byte-economics categories (issue #10).
+# Kept in sync with sections._HEADER_CATEGORY_LABELS / _HEADER_BYTE_CALLOUTS.
+_HEADER_CATEGORY_LABELS_MD = {
+    "standard": "Standard (registered)",
+    "deprecated": "Deprecated / obsoleted",
+    "proprietary": "Proprietary (non-registered)",
+}
+
+_HEADER_BYTE_CALLOUTS_MD = [
+    (
+        "set-cookie",
+        "Cost is upstream and recurring: echoed on every subsequent request.",
+    ),
+    ("content-security-policy", "The largest single policy header."),
+]
+
+
+def _render_header_bytes(
+    field_bytes: Dict[str, int],
+    header_block_hist: Dict[str, int],
+    total_header_bytes: int,
+    total_responses: int,
+    truncated: bool,
+) -> List[str]:
+    """Header byte economics (issue #10): distribution, categories, top-by-bytes."""
+    if not field_bytes and not total_header_bytes:
+        return []
+    mean_bytes = total_header_bytes / total_responses if total_responses else 0
+    lines = [
+        "## Header byte economics",
+        "",
+        "Uncompressed response-header bytes (`len(name) + len(value) + 4` for "
+        "the `: ` and CRLF framing, per occurrence). HPACK/QPACK compress "
+        "repeated headers, so this overstates on-the-wire cost; it measures "
+        "origin / pre-compression intent. `x-crawler-*` headers excluded.",
+        "",
+        f"Mean header block: **{_fmt_byte_size_md(int(mean_bytes))}** per "
+        f"response across {_fmt_count(total_responses)} responses.",
+        "",
+    ]
+
+    dist_total = sum(header_block_hist.values())
+    if dist_total:
+        lines.append("### Header-block size distribution")
+        lines.append("")
+        lines.append("| Header-block size | Responses | % of responses |")
+        lines.append("| --- | --- | --- |")
+        for label in BYTE_BUCKET_ORDER:
+            count = header_block_hist.get(label, 0)
+            if not count:
+                continue
+            pct = count / dist_total * 100
+            lines.append(f"| {label} | {_fmt_count(count)} | {pct:.1f}% |")
+        lines.append("")
+
+    categories = categorize_header_bytes(field_bytes)
+    cat_total = sum(byte_total for _, byte_total in categories)
+    if cat_total:
+        lines.append("### Bytes by field category")
+        lines.append("")
+        if truncated:
+            lines.append("_Long tail elided during shuffle; head only._")
+            lines.append("")
+        lines.append("| Category | Bytes | % of header bytes |")
+        lines.append("| --- | --- | --- |")
+        for category, byte_total in categories:
+            label = _HEADER_CATEGORY_LABELS_MD.get(category, category)
+            pct = byte_total / cat_total * 100
+            lines.append(f"| {label} | {_fmt_byte_size_md(byte_total)} | {pct:.1f}% |")
+        lines.append("")
+
+        callouts = [
+            (name, gloss, field_bytes.get(name, 0))
+            for name, gloss in _HEADER_BYTE_CALLOUTS_MD
+            if field_bytes.get(name, 0)
+        ]
+        if callouts:
+            lines.append("### Notable single headers")
+            lines.append("")
+            lines.append("| Header | Bytes | % of header bytes | Note |")
+            lines.append("| --- | --- | --- | --- |")
+            for name, gloss, byte_total in callouts:
+                pct = byte_total / cat_total * 100
+                lines.append(
+                    f"| `{_md_escape_pipe(name)}` | {_fmt_byte_size_md(byte_total)} "
+                    f"| {pct:.1f}% | {_md_escape_pipe(gloss)} |"
+                )
+            lines.append("")
+
+        lines.append("### Top Response Headers by bytes")
+        lines.append("")
+        if truncated:
+            lines.append("_Long tail elided during shuffle; head only._")
+            lines.append("")
+        lines.append(
+            "A different ranking than top-by-count: a header can be rare but "
+            "huge, or ubiquitous but small."
+        )
+        lines.append("")
+        lines.append("| Header | Bytes | % of header bytes |")
+        lines.append("| --- | --- | --- |")
+        top = sorted(field_bytes.items(), key=lambda kv: kv[1], reverse=True)[:50]
+        for name, byte_total in top:
+            pct = byte_total / cat_total * 100
+            lines.append(
+                f"| {_md_escape_pipe(name)} | {_fmt_byte_size_md(byte_total)} "
+                f"| {pct:.1f}% |"
+            )
+        lines.append("")
     return lines
 
 
@@ -1259,6 +1376,15 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(
         _render_field_counts(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
+        )
+    )
+    lines.extend(
+        _render_header_bytes(
+            data.get("field_bytes") or {},
+            data.get("header_block_hist") or {},
+            int(data.get("total_header_bytes", 0)),
+            total_responses,
+            bool(data.get("truncated_field_bytes")),
         )
     )
     lines.extend(

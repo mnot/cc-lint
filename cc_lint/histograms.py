@@ -82,6 +82,10 @@ def lifetime_bucket(seconds: float) -> str:
 # share the single lifetime scale, so they render with comparable rows.
 LIFETIME_BUCKET_ORDER: List[str] = [label for label, _ in LIFETIME_BUCKETS]
 
+# Display order for byte-scaled histograms (e.g. the per-response header-block
+# size distribution, issue #10).
+BYTE_BUCKET_ORDER: List[str] = [label for label, _ in BYTE_BUCKETS]
+
 
 _BUCKET_VAR_ORDER = {
     "freshness_left_bucket": [label for label, _ in DURATION_BUCKETS],

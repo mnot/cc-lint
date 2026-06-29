@@ -30,10 +30,11 @@ breaking any of them turns an 11-hour run into a memory disaster:
 
 - **Per-mapper top-K trim** before emit. `TOP_K_VAR_VALUES=2000` per
   `vars[var_name]` dict; `TOP_K_FIELD_COUNTS=5000` for field/unprocessed
-  counts; `TOP_K_CSP_SITES=100000` for the per-site CSP-size dict;
-  `TOP_K_RECIPES=2000` per Vary *and* Cache-Control recipe/marginal dict
-  (reused for the co-occurrence bundle/marginal/pair dicts too). Adding a
-  new tracked dict means adding a trim path and a `truncated_*` flag.
+  counts (and for the per-header `field_bytes` byte-economics dict, #10);
+  `TOP_K_CSP_SITES=100000` for the per-site CSP-size dict; `TOP_K_RECIPES=2000`
+  per Vary *and* Cache-Control recipe/marginal dict (reused for the
+  co-occurrence bundle/marginal/pair dicts too). Adding a new tracked dict
+  means adding a trim path and a `truncated_*` flag.
 - **Sharded reducer keys** (`cc_lint.emr.job`): the mapper does NOT emit a
   single "stats" record. It emits `GLOBALS_KEY`, `NOTE_KEY_PREFIX:<note_id>`
   per note, `CSP_SIZES_KEY`, `VARY_KEY`, `CACHE_CONTROL_KEY`, `COOCCUR_KEY`,
@@ -65,16 +66,20 @@ breaking any of them turns an 11-hour run into a memory disaster:
 
 ## Merge contract (don't drop fields)
 
-`StatsCollector.to_dict()` produces 11 fields today; four are conditional —
-`vary` is emitted only when a response carried a `Vary` header, and
-`cache_control` only when one carried a `Cache-Control` header — while
+`StatsCollector.to_dict()` produces up to 18 fields; five are conditional —
+`vary` is emitted only when a response carried a `Vary` header,
+`cache_control` only when one carried a `Cache-Control` header, and
+`value_histograms` only when a tracked numeric header was seen — while
 `cooccur` (the security-header co-occurrence block) and `transition` (the
 legacy/modern dual-emit / transition-tax block, issue #11) are emitted
 whenever there were any responses. `merge_stats_dict()` in `cc_lint/emr/job.py`
 must merge **every** field (`merge_cooccur` covers the bundle/marginal/pair
 dicts and the per-bundle `by_layer` infra breakdown; `merge_transition` covers
 the per-pair, per-category occurrence + site-HLL dicts; `merge_cache_control`
-and `merge_vary` cover their recipe/marginal dicts), and `merge_note()` must
+and `merge_vary` cover their recipe/marginal dicts; `_merge_header_bytes`
+covers the #10 byte-economics trio — `field_bytes`, `header_block_hist`, and
+the `total_header_bytes` scalar — which ride the `globals` shard), and
+`merge_note()` must
 merge every per-note field — anything missed is silently dropped at
 mapper-aggregation time, the reducer never sees it, and the report shows
 zeros. We had this exact bug; the regression test in
