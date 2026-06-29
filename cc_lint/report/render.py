@@ -14,10 +14,10 @@ from cc_lint.hll import hll_estimate
 from cc_lint.report.markdown import render_markdown
 from cc_lint.report.sections import (
     count_total_notes,
+    render_asn_section,
     render_category_overview,
     render_csp_section,
     render_field_counts_section,
-    render_asn_section,
     render_header_stats,
     render_health_summary,
     render_infrastructure_section,

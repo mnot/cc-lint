@@ -5,6 +5,7 @@ from httplint.field.finder import UnknownHttpField
 from httplint.message import HttpResponseLinter
 from httplint.note import Note, levels
 
+from cc_lint.fingerprint import UNMATCHED, Fingerprinter, default_fingerprinter
 from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.hll import (
     HLL_P_GLOBAL,
@@ -13,7 +14,6 @@ from cc_lint.hll import (
     hll_add,
     make_registers,
 )
-from cc_lint.fingerprint import UNMATCHED, Fingerprinter, default_fingerprinter
 from cc_lint.ipasn import IpAsnTable
 from cc_lint.recipes import RecipeStats
 from cc_lint.top_sites import normalize_site
@@ -522,9 +522,7 @@ class StatsCollector:
         for name_lower, value in header_items:
             self.field_counts[name_lower] += 1
             if layers:
-                per_layer = self.field_counts_by_layer.setdefault(
-                    name_lower, Counter()
-                )
+                per_layer = self.field_counts_by_layer.setdefault(name_lower, Counter())
                 for layer in layers:
                     per_layer[layer] += 1
             if name_lower == "content-security-policy":

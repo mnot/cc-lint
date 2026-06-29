@@ -599,9 +599,7 @@ def _render_infrastructure(
     if matched:
         lines.append("| Layer | Role | Responses | % of responses |")
         lines.append("| --- | --- | --- | --- |")
-        for layer, count in sorted(
-            matched.items(), key=lambda kv: kv[1], reverse=True
-        ):
+        for layer, count in sorted(matched.items(), key=lambda kv: kv[1], reverse=True):
             pct = (count / total_responses * 100) if total_responses else 0
             lines.append(
                 f"| {layer} | {roles.get(layer, '')} | {_fmt_count(count)} | "

@@ -476,7 +476,7 @@ def _render_note_card(
         f"{_format_count(count)}</span>"
         "</summary>"
         f'<div class="note-body">{summary_html}{sample_html}{var_html}'
-        f'{layers_html}</div>'
+        f"{layers_html}</div>"
         "</details>"
     )
 
@@ -805,9 +805,9 @@ def _render_field_by_layer(
             continue
         total = field_counts.get(name.lower(), sum(layers.values()))
         layer_bits: List[str] = []
-        for layer, count in sorted(
-            layers.items(), key=lambda kv: kv[1], reverse=True
-        )[:6]:
+        for layer, count in sorted(layers.items(), key=lambda kv: kv[1], reverse=True)[
+            :6
+        ]:
             share = f"{count / total * 100:.0f}%" if total else "—"
             layer_bits.append(
                 f'<span class="layer-chip">{html.escape(layer)} '

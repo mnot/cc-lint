@@ -104,9 +104,7 @@ def _merge_layer_stats(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         _merge_counts(target.setdefault("layer_counts", {}), src_layer)
     src_fcbl = source.get("field_counts_by_layer")
     if src_fcbl:
-        _merge_nested_counts(
-            target.setdefault("field_counts_by_layer", {}), src_fcbl
-        )
+        _merge_nested_counts(target.setdefault("field_counts_by_layer", {}), src_fcbl)
     src_asn = source.get("asn_counts")
     if src_asn:
         _merge_counts(target.setdefault("asn_counts", {}), src_asn)
