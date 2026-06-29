@@ -163,6 +163,16 @@ STYLE = """
   ul.errors > li { margin: .25rem 0; }
   ul.errors .err { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
+  details.field-samples { margin: .35rem 0 0; }
+  details.field-samples > summary { cursor: pointer; color: var(--muted); font-size: .85em; }
+  .field-val {
+    display: block;
+    margin-left: 1.5em;
+    font-size: .8em;
+    color: var(--muted);
+    word-break: break-all;
+  }
+
   table.var-table, table.data-table {
     border-collapse: collapse;
     width: 100%;

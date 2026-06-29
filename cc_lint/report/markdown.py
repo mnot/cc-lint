@@ -1,11 +1,12 @@
 """Markdown renderer for cc-lint stats.
 
 Produces a plain-text-friendly version of the same data the HTML report
-surfaces, suitable for terminals, GitHub previews, and copy-paste into
-chat. Output is intentionally narrower in scope than the HTML: the
-markdown view focuses on the high-signal information (totals, top notes,
-top headers) and elides interactive affordances like the unseen-notes
-collapsibles or the per-(var, val) sample lists.
+surfaces, suitable for terminals, GitHub previews, copy-paste into chat,
+and -- the primary use -- feeding to an LLM for analysis. Output is
+narrower than the HTML in chrome (it elides interactive affordances like
+the unseen-notes collapsibles), but it carries the same high-signal data,
+including the per-field sample URLs and their captured on-the-wire header
+values, which are exactly what downstream analysis needs.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -127,11 +128,36 @@ def _fmt_byte_size_md(byte_size: int) -> str:
     return f"{byte_size / (1024 * 1024):.1f} MB"
 
 
+def _render_value_samples(
+    value_samples: Dict[str, List[Dict[str, Any]]], shown_values: List[str]
+) -> List[str]:
+    """Render per-field sample URLs + captured header values as a nested list.
+
+    ``shown_values`` is the set of values whose rows the table actually showed,
+    so samples for elided long-tail values aren't dangled without context.
+    """
+    blocks: List[str] = []
+    for val in shown_values:
+        samples = value_samples.get(val) or []
+        urls = [s for s in samples if s.get("url")]
+        if not urls:
+            continue
+        blocks.append(f"- `{_md_escape_pipe(val)}`")
+        for sample in urls:
+            captured = sample.get("vars", {}).get("field_values")
+            suffix = f" — `{captured}`" if captured else ""
+            blocks.append(f"  - {sample['url']}{suffix}")
+    if not blocks:
+        return []
+    return ["Samples by value:", "", *blocks, ""]
+
+
 def _render_var_table(
     var_name: str,
     counts: Dict[str, int],
     field_counts: Dict[str, int],
     largest_by_value: Optional[Dict[str, int]] = None,
+    value_samples: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[str]:
     is_field_name = var_name == "field_name"
     headers = ["Value", "Note fires"]
@@ -168,6 +194,10 @@ def _render_var_table(
     if len(counts) > 25:
         lines.append(f"_… {len(counts) - 25} more values not shown …_")
     lines.append("")
+    if value_samples:
+        lines.extend(
+            _render_value_samples(value_samples, [val for val, _ in sorted_vals])
+        )
     return lines
 
 
@@ -211,6 +241,10 @@ def _render_note_block(
     truncated_vars = note_data.get("truncated_vars") or {}
     numeric_maxes: Dict[str, Dict[str, int]] = note_data.get("numeric_maxes") or {}
     field_size_max = numeric_maxes.get("field_size") or {}
+    var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = (
+        note_data.get("var_samples") or {}
+    )
+    field_samples = var_samples.get("field_name") or {}
     var_stats = note_data.get("vars") or {}
     for var_name, counts in var_stats.items():
         if not counts:
@@ -218,7 +252,10 @@ def _render_note_block(
         if truncated_vars.get(var_name):
             lines.append(f"_{var_name}: long tail elided during shuffle; head only._")
         largest = field_size_max if var_name == "field_name" else None
-        lines.extend(_render_var_table(var_name, counts, field_counts, largest))
+        samples = field_samples if var_name == "field_name" else None
+        lines.extend(
+            _render_var_table(var_name, counts, field_counts, largest, samples)
+        )
     return lines
 
 
