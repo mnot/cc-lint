@@ -1,4 +1,6 @@
-from typing import Dict, List, NotRequired, TypedDict
+from typing import Dict, List, TypedDict
+
+from typing_extensions import NotRequired
 
 
 class SampleType(TypedDict):
