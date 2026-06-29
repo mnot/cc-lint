@@ -183,6 +183,27 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
         stats.process_linter(linter)
         self.assertNotIn("vary", stats.to_dict())
 
+    def test_structured_field_parse_error_populates_field_error(self) -> None:
+        # A malformed structured-field header fires STRUCTURED_FIELD_PARSE_ERROR,
+        # whose vars are field_name/problem/context (not `error`). The derived
+        # `field_error` var must compose `<field_name>: <problem>` so the
+        # report's "Field → parse error" breakdown has data to render.
+        stats = StatsCollector()
+        linter = _linter_for("http://x.example/")
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        # Accept-CH is an sf-list; trailing garbage makes it unparseable.
+        linter.process_headers([(b"Accept-CH", b'"""')])
+        linter.finish_content(True)
+        stats.process_linter(linter)
+
+        note = stats.note_data["STRUCTURED_FIELD_PARSE_ERROR"]
+        field_error = note["vars"]["field_error"]
+        self.assertEqual(len(field_error), 1)
+        key = next(iter(field_error))
+        self.assertTrue(key.startswith("Accept-CH: "))
+        self.assertNotIn("\n", key)
+        self.assertEqual(field_error[key], 1)
+
     def test_subnotes_are_counted(self) -> None:
         # httplint attaches strength/quality findings as children via
         # Note.add_child (appended to note.subnotes), not to linter.notes.
