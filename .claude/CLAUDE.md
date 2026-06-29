@@ -113,9 +113,13 @@ when those files are dirty.
 - Tests / mypy / pylint must all pass: `make test typecheck lint`. pylint
   is held at 10.00/10. Mypy is strict. No `# type: ignore` without a
   comment justifying it.
-- Commits: `Add:` / `Changed:` / `Fix:` / `Test:` prefix, imperative, ≤72
-  cols on the subject. The body explains *why*. Include the
-  `Co-Authored-By: Claude Opus 4.7` trailer.
+- Commits: keep-a-changelog prefixes — `Added:`, `Changed:`, `Fixed:`,
+  `Removed:` — past tense. `Makefile.pyproject` greps these to assemble
+  the release changelog (`make changelog.md`); commits using `Add:`,
+  `Fix:`, `Refactor:`, `Test:`, `Docs:`, `Build:` are invisible to the
+  release tooling, so prefer the four canonical prefixes whenever the
+  change fits one. Subject ≤72 cols. The body explains *why*. Include
+  the `Co-Authored-By: Claude Opus 4.7` trailer.
 - No backward-compat shims, no half-finished implementations, no
   speculative abstractions. The codebase prefers "delete cleanly" to
   "deprecate gradually" — fine here because there are no external
