@@ -34,7 +34,7 @@ from cc_lint.emr.warc_worker import (
     process_warc_to_file,
 )
 from cc_lint.hll import hll_merge
-from cc_lint.stats import StatsCollector
+from cc_lint.stats import StatsCollector, VAR_SAMPLE_LIMIT
 from cc_lint.top_sites import load_top_sites
 
 
@@ -60,7 +60,8 @@ def _build_run_context(options: Any) -> Dict[str, Any]:
 
 
 SAMPLE_LIMIT = 5
-VAR_SAMPLE_LIMIT = 15
+# VAR_SAMPLE_LIMIT is imported from cc_lint.stats so the collection-side cap and
+# this reducer-side merge cap stay equal (single source of truth).
 
 # Long-tail caps applied before shuffle and again at reducer output. The web
 # generates extremely long-tailed value distributions for things like

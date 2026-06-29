@@ -55,13 +55,25 @@ def _format_vars(note_vars: Dict[str, Any]) -> str:
     return f"<span class=\"vars\">{', '.join(items)}</span>"
 
 
-def _sample_li(sample: Dict[str, Any]) -> str:
-    url = sample.get("url", "")
+def _sample_li_html(url: str, trailing_html: str) -> str:
+    """Render a sample list item: a redbot link to ``url`` plus trailing HTML.
+
+    The single place the sample ``<li>`` / redbot-link markup lives, so the
+    note-level and per-field renderers can't drift on escaping, rel/target, or
+    the redbot URL. ``trailing_html`` is already-escaped markup appended after
+    the link (the vars span or the captured-value code element).
+    """
     if not url:
         return ""
     return (
         f'<li><a href="{html.escape(_redbot_link(url))}" target="_blank" rel="noopener">'
-        f"{html.escape(url)}</a>{_format_vars(sample.get('vars', {}))}</li>"
+        f"{html.escape(url)}</a>{trailing_html}</li>"
+    )
+
+
+def _sample_li(sample: Dict[str, Any]) -> str:
+    return _sample_li_html(
+        sample.get("url", ""), _format_vars(sample.get("vars", {}))
     )
 
 
@@ -72,17 +84,11 @@ def _field_sample_li(sample: Dict[str, Any]) -> str:
     wire (``field_values``) rather than the full note-vars dump, so the reader
     can characterise a field's malformed population at a glance.
     """
-    url = sample.get("url", "")
-    if not url:
-        return ""
     raw_values = sample.get("vars", {}).get("field_values")
     value_html = ""
     if raw_values:
         value_html = f'<code class="field-val">{html.escape(str(raw_values))}</code>'
-    return (
-        f'<li><a href="{html.escape(_redbot_link(url))}" target="_blank" rel="noopener">'
-        f"{html.escape(url)}</a>{value_html}</li>"
-    )
+    return _sample_li_html(sample.get("url", ""), value_html)
 
 
 def _field_samples_details(samples: List[Dict[str, Any]]) -> str:

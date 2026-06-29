@@ -139,13 +139,18 @@ class TestRenderer(unittest.TestCase):
                 }
             },
         }
-        html = self._render(data)
+        html, md = self._render_both(data)
         self.assertIn("field-samples", html)
         # COEP sample URL and its captured malformed value both surface.
         self.assertIn("http://coep.example/", html)
         self.assertIn("require-corp; foo", html)
         # The via sample (no captured value) still renders its URL.
         self.assertIn("http://via.example/", html)
+        # Markdown carries the same per-field samples (LLM-facing parity).
+        self.assertIn("Samples by value:", md)
+        self.assertIn("http://coep.example/", md)
+        self.assertIn("require-corp; foo", md)
+        self.assertIn("http://via.example/", md)
 
     def test_sites_hll_surfaces(self) -> None:
         global_hll = make_registers(HLL_P_GLOBAL)

@@ -96,6 +96,13 @@ SAMPLES_TO_COLLECT["VARY_COMPLEX"] = {
 # the report or the shuffle. Applied per value, before repr().
 MAX_FIELD_VALUE_LEN = 300
 
+# Distinct sites retained per (var, value) sample bucket. The collection side
+# (StatsCollector._collect_samples) and the reducer-side merge
+# (cc_lint.emr.job._merge_var_samples) must use the same cap, so it lives here
+# -- the single source of truth -- and job.py imports it. It can't live in
+# job.py because job.py imports stats, not the reverse.
+VAR_SAMPLE_LIMIT = 15
+
 
 def _bucket_var(note: Note, source_var: str, bucketer: Any) -> Optional[str]:
     raw = note.vars.get(source_var)
@@ -153,7 +160,13 @@ def create_sample(
 ) -> Optional[SampleType]:
     """
     Helper to create a sample dictionary from a note.
-    Captures header values if var_name/val_str are provided and match logic.
+
+    For the note-level samples pool (``var_name`` unset) the full note-vars
+    dump is carried, since :func:`cc_lint.report.sections._sample_li` renders
+    it. For per-(var, val) samples (``var_name``/``val_str`` set) only the
+    payload the report actually reads is carried -- the on-the-wire header
+    value(s) for ``field_name`` samples -- so the discarded note-attribute dump
+    doesn't ride the mapper->reducer shuffle for every retained sample.
     """
     sample_url = getattr(linter, "base_uri", None)
     if not sample_url:
@@ -162,18 +175,10 @@ def create_sample(
     if site is None:
         return None
 
-    note_vars = {}
-    filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
-    for key, val in vars(note).items():
-        if key not in filtered_keys:
-            note_vars[key] = str(val)
-    for key, val in note.vars.items():
-        if key not in filtered_keys:
-            note_vars[key] = str(val)
-
+    note_vars: Dict[str, str] = {}
     if var_name and val_str:
-        # Capture header values for context
         if var_name == "field_name":
+            # Capture the offending header value(s) for context.
             target_field_name = val_str.lower()
             values = []
             for h_name, h_val in linter.headers.text:
@@ -185,6 +190,14 @@ def create_sample(
                     values.append(h_val_str)
             if values:
                 note_vars["field_values"] = repr(values)
+    else:
+        filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
+        for key, val in vars(note).items():
+            if key not in filtered_keys:
+                note_vars[key] = str(val)
+        for key, val in note.vars.items():
+            if key not in filtered_keys:
+                note_vars[key] = str(val)
 
     return {"url": sample_url, "vars": note_vars, "site": site}
 
@@ -350,7 +363,7 @@ class StatsCollector:
                 self.note_data[note_id]["var_samples"][var_name][val_str] = []
 
             current_samples = self.note_data[note_id]["var_samples"][var_name][val_str]
-            if len(current_samples) >= 15:
+            if len(current_samples) >= VAR_SAMPLE_LIMIT:
                 continue
             if sample_site not in {s.get("site") for s in current_samples}:
                 current_samples.append(sample)
