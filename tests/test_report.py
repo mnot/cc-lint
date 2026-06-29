@@ -288,6 +288,45 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Findings by category", md)
         self.assertIn("### Caching", md)
 
+    def test_vary_section_rendered(self) -> None:
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "vary": {
+                "responses_with_vary": 10,
+                "recipes": {
+                    "occ": {
+                        "accept-encoding, cookie, x-ab-bucket": 6,
+                        "user-agent": 4,
+                    },
+                    "hlls": {},
+                },
+                "marginals": {
+                    "occ": {
+                        "accept-encoding": 6,
+                        "cookie": 6,
+                        "x-ab-bucket": 6,
+                        "user-agent": 4,
+                    },
+                    "hlls": {},
+                },
+            },
+        }
+        html, md = self._render_both(data)
+        self.assertIn('id="vary"', html)
+        self.assertIn("Vary composition", html)
+        self.assertIn("## Vary composition", md)
+        # Synthetic token flagged in HTML; recipe surfaces in both.
+        self.assertIn("vary-synthetic", html)
+        self.assertIn("x-ab-bucket", html)
+        self.assertIn("Accept-Encoding factored out", html)
+        self.assertIn("Non-standard Vary tokens", md)
+        self.assertIn("x-ab-bucket", md)
+
+    def test_no_vary_section_absent(self) -> None:
+        html = self._render({"total_responses": 5, "notes": {}})
+        self.assertNotIn('id="vary"', html)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,

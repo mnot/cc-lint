@@ -22,6 +22,16 @@ from cc_lint.report.severity import (
     possible_note_ids,
 )
 from cc_lint.report.styles import METHODOLOGY_NOTE
+from cc_lint.vary import (
+    ACCEPT_ENCODING,
+    AE_ONLY_LABEL,
+    HIGH_INTEREST_AXES,
+    count_nonstandard,
+    factor_out,
+    is_nonstandard_token,
+    is_registered_field,
+    recipe_tokens,
+)
 
 _NOTE_SUMMARIES = build_summary_index()
 
@@ -463,6 +473,161 @@ def _render_csp_section(csp_sizes: Dict[str, int]) -> List[str]:
     return lines
 
 
+def _vary_pct(count: int, denom: int) -> str:
+    return f"{count / denom * 100:.2f}%" if denom else "—"
+
+
+def _vary_sites(hlls: Dict[str, Any], key: str) -> str:
+    registers = hlls.get(key)
+    if isinstance(registers, list) and registers:
+        est = hll_estimate(registers)
+        if est > 0:
+            return f"~{_fmt_count(est)}"
+    return "—"
+
+
+def _recipe_label_md(recipe: str) -> str:
+    """Recipe string with non-standard tokens bolded inline.
+
+    Mirrors the HTML renderer's ``vary-synthetic`` highlighting so both
+    views flag *which* tokens are synthetic, not just how many (the
+    aggregate count is the adjacent column). The AE-only placeholder is
+    not a token list, so it renders verbatim.
+    """
+    if recipe == AE_ONLY_LABEL:
+        return _md_escape_pipe(recipe)
+    parts = []
+    for token in recipe_tokens(recipe):
+        escaped = _md_escape_pipe(token)
+        parts.append(f"**{escaped}**" if is_nonstandard_token(token) else escaped)
+    return ", ".join(parts)
+
+
+def _render_recipe_md(recipe_dict: Dict[str, Any], denom: int) -> List[str]:
+    occ: Dict[str, int] = recipe_dict.get("occ", {})
+    hlls: Dict[str, Any] = recipe_dict.get("hlls", {})
+    if not occ:
+        return ["_No data._", ""]
+    ordered = sorted(occ.items(), key=lambda kv: kv[1], reverse=True)
+    lines = [
+        "| Recipe | Responses | % of Vary | Sites | Synthetic tokens |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for recipe, count in ordered[:25]:
+        synth = 0 if recipe == AE_ONLY_LABEL else count_nonstandard(recipe)
+        lines.append(
+            f"| {_recipe_label_md(recipe)} | {_fmt_count(count)} | "
+            f"{_vary_pct(count, denom)} | {_vary_sites(hlls, recipe)} | "
+            f"{_fmt_count(synth) if synth else '—'} |"
+        )
+    if len(ordered) > 25:
+        lines.append(f"_… {len(ordered) - 25} more recipes not shown …_")
+    lines.append("")
+    return lines
+
+
+def _render_marginal_md(
+    entries: List[Tuple[str, int]],
+    hlls: Dict[str, Any],
+    denom: int,
+    show_registered: bool,
+    limit: int = 25,
+) -> List[str]:
+    if not entries:
+        return ["_None observed._", ""]
+    headers = ["Field-name", "Responses", "% of Vary", "Sites"]
+    if show_registered:
+        headers.append("Registered?")
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for token, count in entries[:limit]:
+        cells = [
+            _md_escape_pipe(token),
+            _fmt_count(count),
+            _vary_pct(count, denom),
+            _vary_sites(hlls, token),
+        ]
+        if show_registered:
+            cells.append("yes" if is_registered_field(token) else "no")
+        lines.append("| " + " | ".join(cells) + " |")
+    if len(entries) > limit:
+        lines.append(f"_… {len(entries) - limit} more not shown …_")
+    lines.append("")
+    return lines
+
+
+def _render_vary_section(vary: Dict[str, Any]) -> List[str]:
+    if not vary:
+        return []
+    denom = int(vary.get("responses_with_vary", 0))
+    if denom <= 0:
+        return []
+    recipes: Dict[str, Any] = vary.get("recipes") or {}
+    marginals: Dict[str, Any] = vary.get("marginals") or {}
+    marg_occ: Dict[str, int] = marginals.get("occ", {})
+    marg_hlls: Dict[str, Any] = marginals.get("hlls", {})
+
+    lines = [
+        "## Vary composition",
+        "",
+        f"Composition of the `Vary` header across the {_fmt_count(denom)} "
+        "responses that carried one. A *recipe* is the full lowercased, "
+        "deduped, sorted set of field-names in a response's `Vary`. "
+        "*Responses* is occurrence-weighted; *Sites* is a HyperLogLog "
+        "estimate of distinct operators.",
+        "",
+        "### Top Vary recipes",
+        "",
+    ]
+    if vary.get("recipes_truncated"):
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    lines.extend(_render_recipe_md(recipes, denom))
+
+    lines.append("### Top Vary recipes (Accept-Encoding factored out)")
+    lines.append("")
+    factored = factor_out(recipes, ACCEPT_ENCODING, AE_ONLY_LABEL)
+    lines.extend(_render_recipe_md(factored, denom))
+
+    lines.append("### High-interest axes")
+    lines.append("")
+    axes_entries = [(axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES]
+    lines.extend(
+        _render_marginal_md(axes_entries, marg_hlls, denom, show_registered=False)
+    )
+
+    lines.append("### Vary field-names (marginals)")
+    lines.append("")
+    if vary.get("marginals_truncated"):
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    top_marginals = sorted(marg_occ.items(), key=lambda kv: kv[1], reverse=True)
+    lines.extend(
+        _render_marginal_md(top_marginals, marg_hlls, denom, show_registered=True)
+    )
+
+    lines.append("### Non-standard Vary tokens")
+    lines.append("")
+    lines.append(
+        "Tokens httplint's field registry does not recognise (≈ not "
+        "IANA-registered), approximating the synthetic cache-key population. "
+        "A **lower bound**: some synthetic schemes are consumed at the edge "
+        "and never appear in `Vary`, and the classification is approximate."
+    )
+    lines.append("")
+    nonstandard = sorted(
+        ((t, c) for t, c in marg_occ.items() if is_nonstandard_token(t)),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    lines.extend(
+        _render_marginal_md(nonstandard, marg_hlls, denom, show_registered=False)
+    )
+    return lines
+
+
 def _render_unprocessed(
     unprocessed_counts: Dict[str, int], truncated: bool
 ) -> List[str]:
@@ -563,6 +728,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
         )
     )
     lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
+    lines.extend(_render_vary_section(data.get("vary") or {}))
     lines.extend(
         _render_unprocessed(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))

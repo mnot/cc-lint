@@ -144,6 +144,45 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
         self.assertGreater(stats.csp_max_by_site["a.example"], 20)
         self.assertEqual(stats.csp_max_by_site["b.example"], 0)
 
+    def test_vary_composition_collected(self) -> None:
+        # accept-encoding,cookie on a.example (twice); user-agent on b.example;
+        # * on c.example; no Vary on d.example.
+        stats = StatsCollector()
+        for url, vary in [
+            ("http://a.example/1", b"Accept-Encoding, Cookie"),
+            ("http://a.example/2", b"Cookie, Accept-Encoding"),  # same recipe
+            ("http://b.example/", b"User-Agent"),
+            ("http://c.example/", b"*"),
+            ("http://d.example/", None),
+        ]:
+            linter = _linter_for(url)
+            linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+            headers = [(b"vary", vary)] if vary is not None else []
+            linter.process_headers(headers)
+            linter.finish_content(True)
+            stats.process_linter(linter)
+        data = stats.to_dict()
+        self.assertIn("vary", data)
+        vary = data["vary"]
+        self.assertEqual(vary["responses_with_vary"], 4)
+        # Recipe key is sorted+deduped, so both a.example responses collapse.
+        self.assertEqual(vary["recipes"]["occ"]["accept-encoding, cookie"], 2)
+        self.assertEqual(vary["recipes"]["occ"]["user-agent"], 1)
+        self.assertEqual(vary["recipes"]["occ"]["*"], 1)
+        # Marginals count each field-name; the wildcard is excluded.
+        self.assertEqual(vary["marginals"]["occ"]["cookie"], 2)
+        self.assertEqual(vary["marginals"]["occ"]["accept-encoding"], 2)
+        self.assertNotIn("*", vary["marginals"]["occ"])
+
+    def test_no_vary_key_when_absent(self) -> None:
+        stats = StatsCollector()
+        linter = _linter_for("http://nothing.example/")
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        linter.process_headers([(b"content-type", b"text/html")])
+        linter.finish_content(True)
+        stats.process_linter(linter)
+        self.assertNotIn("vary", stats.to_dict())
+
     def test_structured_field_parse_error_populates_field_error(self) -> None:
         # A malformed structured-field header fires STRUCTURED_FIELD_PARSE_ERROR,
         # whose vars are field_name/problem/context (not `error`). The derived

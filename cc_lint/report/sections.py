@@ -14,6 +14,16 @@ from cc_lint.histograms import bucket_order
 from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
+from cc_lint.vary import (
+    ACCEPT_ENCODING,
+    AE_ONLY_LABEL,
+    HIGH_INTEREST_AXES,
+    count_nonstandard,
+    factor_out,
+    is_nonstandard_token,
+    is_registered_field,
+    recipe_tokens,
+)
 
 REDBOT_BASE = "https://redbot.org/check?uri="
 
@@ -750,6 +760,186 @@ def render_unprocessed_section(
         "<thead><tr><th>Header</th><th>Count</th></tr></thead>"
         f"<tbody>{rows}</tbody>"
         "</table>"
+        "</section>"
+    )
+
+
+# ---- Vary composition ------------------------------------------------------
+
+
+def _pct_of_vary(count: int, denom: int) -> str:
+    return f"{count / denom * 100:.2f}%" if denom else "—"
+
+
+def _hll_sites(hlls: Dict[str, Any], key: str) -> Optional[int]:
+    registers = hlls.get(key)
+    if isinstance(registers, list) and registers:
+        est = hll_estimate(registers)
+        return est if est > 0 else None
+    return None
+
+
+def _recipe_label_html(recipe: str) -> str:
+    if recipe == AE_ONLY_LABEL:
+        return f"<em>{html.escape(recipe)}</em>"
+    parts: List[str] = []
+    for token in recipe_tokens(recipe):
+        escaped = html.escape(token)
+        if is_nonstandard_token(token):
+            parts.append(
+                '<span class="vary-synthetic" '
+                'title="non-standard / synthetic token">'
+                f"{escaped}</span>"
+            )
+        else:
+            parts.append(escaped)
+    return ", ".join(parts)
+
+
+def _render_recipe_table(recipe_dict: Dict[str, Any], denom: int) -> str:
+    occ: Dict[str, int] = recipe_dict.get("occ", {})
+    hlls: Dict[str, Any] = recipe_dict.get("hlls", {})
+    if not occ:
+        return '<p class="muted">No data.</p>'
+    ordered = sorted(occ.items(), key=lambda kv: kv[1], reverse=True)
+    head = ["Recipe", "Responses", "% of Vary", "Sites", "Synthetic tokens"]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for recipe, count in ordered[:25]:
+        sites = _hll_sites(hlls, recipe)
+        synth = 0 if recipe == AE_ONLY_LABEL else count_nonstandard(recipe)
+        cells = [
+            _recipe_label_html(recipe),
+            _format_count(count),
+            _pct_of_vary(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+            _format_count(synth) if synth else "—",
+        ]
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    if len(ordered) > 25:
+        rows.append(
+            f'<tr><td colspan="{len(head)}" class="muted">'
+            f"… {len(ordered) - 25} more recipes not shown …</td></tr>"
+        )
+    return (
+        '<table class="data-table vary-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def _render_marginal_table(
+    entries: List[Tuple[str, int]],
+    hlls: Dict[str, Any],
+    denom: int,
+    show_registered: bool,
+    limit: int = 25,
+) -> str:
+    if not entries:
+        return '<p class="muted">None observed.</p>'
+    head = ["Field-name", "Responses", "% of Vary", "Sites"]
+    if show_registered:
+        head.append("Registered?")
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for token, count in entries[:limit]:
+        sites = _hll_sites(hlls, token)
+        cells = [
+            html.escape(token),
+            _format_count(count),
+            _pct_of_vary(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+        ]
+        if show_registered:
+            cells.append("yes" if is_registered_field(token) else "no")
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    if len(entries) > limit:
+        rows.append(
+            f'<tr><td colspan="{len(head)}" class="muted">'
+            f"… {len(entries) - limit} more not shown …</td></tr>"
+        )
+    return (
+        '<table class="data-table vary-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def render_vary_section(vary: Dict[str, Any]) -> str:
+    """Render the Vary composition section (issue #3)."""
+    if not vary:
+        return ""
+    denom = int(vary.get("responses_with_vary", 0))
+    if denom <= 0:
+        return ""
+    recipes: Dict[str, Any] = vary.get("recipes") or {}
+    marginals: Dict[str, Any] = vary.get("marginals") or {}
+    marg_occ: Dict[str, int] = marginals.get("occ", {})
+    marg_hlls: Dict[str, Any] = marginals.get("hlls", {})
+
+    blocks: List[str] = [
+        '<p class="muted">Composition of <code>Vary</code> across the '
+        f"{_format_count(denom)} responses that carried one. A "
+        "<strong>recipe</strong> is the lowercased, deduped, sorted set of "
+        "field-names in a response's <code>Vary</code> &mdash; where "
+        "synthetic cache-key engineering shows up. <em>Responses</em> is "
+        "occurrence-weighted (one CDN origin can emit a recipe across "
+        "millions of responses); <em>Sites</em> is a HyperLogLog estimate of "
+        "distinct operators.</p>",
+        "<h3>Top Vary recipes</h3>",
+    ]
+    if vary.get("recipes_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    blocks.append(_render_recipe_table(recipes, denom))
+    blocks.append("<h3>Top Vary recipes (Accept-Encoding factored out)</h3>")
+    blocks.append(
+        '<p class="muted"><code>Accept-Encoding</code> appears in the large '
+        "majority of <code>Vary</code> headers and flattens the ranking. "
+        "Here it is removed from each recipe and the remainders re-merged "
+        "(site counts union exactly), so the meaningful axes surface.</p>"
+    )
+    factored = factor_out(recipes, ACCEPT_ENCODING, AE_ONLY_LABEL)
+    blocks.append(_render_recipe_table(factored, denom))
+    blocks.append(
+        "<h3>High-interest axes</h3>"
+        '<p class="muted">Prevalence of the cache-key / availability axes, as '
+        "a share of responses carrying <code>Vary</code>.</p>"
+    )
+    axes_entries = [(axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES]
+    blocks.append(
+        _render_marginal_table(axes_entries, marg_hlls, denom, show_registered=False)
+    )
+    blocks.append("<h3>Vary field-names (marginals)</h3>")
+    if vary.get("marginals_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    top_marginals = sorted(marg_occ.items(), key=lambda kv: kv[1], reverse=True)
+    blocks.append(
+        _render_marginal_table(top_marginals, marg_hlls, denom, show_registered=True)
+    )
+    blocks.append(
+        "<h3>Non-standard Vary tokens</h3>"
+        '<p class="muted">Tokens httplint\'s field registry does not '
+        "recognise (≈ not IANA-registered), approximating the synthetic "
+        "cache-key population. A <strong>lower bound</strong>: some schemes "
+        "are consumed at the edge and never appear in <code>Vary</code>, and "
+        "the classification is approximate (a real request header httplint "
+        "lacks a parser for also lands here).</p>"
+    )
+    nonstandard = sorted(
+        ((t, c) for t, c in marg_occ.items() if is_nonstandard_token(t)),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    blocks.append(
+        _render_marginal_table(nonstandard, marg_hlls, denom, show_registered=False)
+    )
+
+    return (
+        '<section id="vary">'
+        "<h2>Vary composition</h2>"
+        f"{''.join(blocks)}"
         "</section>"
     )
 

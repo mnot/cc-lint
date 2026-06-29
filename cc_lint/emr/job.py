@@ -37,6 +37,7 @@ from cc_lint.emr.warc_worker import (
 from cc_lint.hll import hll_merge
 from cc_lint.stats import VAR_SAMPLE_LIMIT, StatsCollector
 from cc_lint.top_sites import load_top_sites
+from cc_lint.vary import merge_vary, trim_vary
 
 
 def _httplint_version() -> str:
@@ -71,6 +72,7 @@ SAMPLE_LIMIT = 5
 # the shuffle and final report size.
 TOP_K_VAR_VALUES = 2000  # entries kept per vars[var_name] counts dict
 TOP_K_FIELD_COUNTS = 5000  # entries kept in field_counts / unprocessed_counts
+TOP_K_RECIPES = 2000  # entries kept per Vary recipe / marginal dict
 
 
 def _merge_counts(target: Dict[str, int], source: Dict[str, int]) -> None:
@@ -193,11 +195,15 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     if src_csp:
         target.setdefault("csp_max_by_site", {})
         merge_csp_sizes(target["csp_max_by_site"], src_csp)
+    src_vary = source.get("vary")
+    if src_vary:
+        merge_vary(target.setdefault("vary", {}), src_vary)
 
 
 GLOBALS_KEY = "globals"
 NOTE_KEY_PREFIX = "note:"
 CSP_SIZES_KEY = "csp_sizes"
+VARY_KEY = "vary"
 
 # Defensive cap on the per-site CSP-size dict. The dict naturally bounds at
 # the cardinality of distinct sites the mapper saw (~ TOP_N in practice),
@@ -340,6 +346,8 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
         )
         if was_trunc:
             stats["truncated_unprocessed_counts"] = True
+    if stats.get("vary"):
+        trim_vary(stats["vary"], TOP_K_RECIPES)
     for note in stats.get("notes", {}).values():
         var_counts = note.get("vars", {})
         retained_vals_per_var: Dict[str, set[str]] = {}
@@ -611,6 +619,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         csp_sizes = stats.get("csp_max_by_site") or {}
         if csp_sizes:
             yield CSP_SIZES_KEY, _trim_csp_sizes(csp_sizes)
+        vary = stats.get("vary") or {}
+        if vary:
+            yield VARY_KEY, vary
 
     # No combiner: mapper_final emits each (key, value) exactly once per
     # mapper, so there is nothing for a combiner to fold. The mrjob default
@@ -634,6 +645,12 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             for value in values:
                 merge_csp_sizes(merged_csp, value)
             yield CSP_SIZES_KEY, _trim_csp_sizes(merged_csp)
+        elif key == VARY_KEY:
+            merged_vary: Dict[str, Any] = {}
+            for value in values:
+                merge_vary(merged_vary, value)
+            trim_vary(merged_vary, TOP_K_RECIPES)
+            yield VARY_KEY, merged_vary
 
 
 def main() -> None:

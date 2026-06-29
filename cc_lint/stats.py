@@ -9,11 +9,14 @@ from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.hll import (
     HLL_P_GLOBAL,
     HLL_P_PER_NOTE,
+    HLL_P_RECIPE,
     hll_add,
     make_registers,
 )
+from cc_lint.recipes import RecipeStats
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
+from cc_lint.vary import ASTERISK, recipe_key, vary_tokens
 
 
 def _level_to_severity(level: Any) -> Optional[str]:
@@ -272,6 +275,16 @@ class StatsCollector:
         # population-level summary of what httplint thought of each
         # crawled response, not a claim about specific sites.
         self.severity_counts: Counter[str] = Counter()
+        # Vary composition (issue #3). Recipes are the full sorted token-set
+        # per response (the primary artifact); marginals are the per-field
+        # rollup. Both carry occurrence + per-site HLL via RecipeStats.
+        # Recipes are high-cardinality (up to TOP_K_RECIPES per mapper), so
+        # their per-site HLLs use the coarse HLL_P_RECIPE precision to bound
+        # shuffle; marginals are bounded (a few hundred field-names) and
+        # carry the headline axes, so they keep the default HLL_P_PER_NOTE.
+        self.responses_with_vary = 0
+        self.vary_recipes = RecipeStats(HLL_P_RECIPE)
+        self.vary_marginals = RecipeStats(HLL_P_PER_NOTE)
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -299,6 +312,25 @@ class StatsCollector:
 
         self.severity_counts[max_severity or "clean"] += 1
         self._process_headers(linter, site)
+        self._process_vary(linter, site)
+
+    def _process_vary(self, linter: HttpResponseLinter, site: Optional[str]) -> None:
+        """Tabulate Vary composition for responses carrying a Vary header.
+
+        Records the full token-set as a recipe and each field-name as a
+        marginal, both keyed for per-occurrence and per-site rollups. The
+        wildcard token stays in the recipe (so ``*`` shows up as its own
+        recipe) but is excluded from the per-field marginals.
+        """
+        tokens = vary_tokens(linter)
+        if not tokens:
+            return
+        self.responses_with_vary += 1
+        self.vary_recipes.add(recipe_key(tokens), site)
+        for token in tokens:
+            if token == ASTERISK:
+                continue
+            self.vary_marginals.add(token, site)
 
     def _process_note(
         self, note: Note, linter: HttpResponseLinter, site: Optional[str]
@@ -431,7 +463,7 @@ class StatsCollector:
                 self.unprocessed_counts[name] += 1
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result: Dict[str, Any] = {
             "total_responses": self.total_responses,
             "notes": self.note_data,
             "field_counts": dict(self.field_counts),
@@ -440,3 +472,10 @@ class StatsCollector:
             "csp_max_by_site": dict(self.csp_max_by_site),
             "severity_counts": dict(self.severity_counts),
         }
+        if self.responses_with_vary:
+            result["vary"] = {
+                "responses_with_vary": self.responses_with_vary,
+                "recipes": self.vary_recipes.to_dict(),
+                "marginals": self.vary_marginals.to_dict(),
+            }
+        return result

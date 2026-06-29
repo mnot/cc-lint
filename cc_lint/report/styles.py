@@ -248,6 +248,11 @@ STYLE = """
     min-width: 1px;
   }
 
+  span.vary-synthetic {
+    color: var(--bad-fg);
+    font-weight: 600;
+  }
+
   .health-bar {
     display: flex;
     width: 100%;

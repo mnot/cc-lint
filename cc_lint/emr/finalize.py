@@ -39,12 +39,14 @@ from cc_lint.emr.job import (
     CSP_SIZES_KEY,
     GLOBALS_KEY,
     NOTE_KEY_PREFIX,
+    VARY_KEY,
     merge_csp_sizes,
     merge_globals,
     merge_note,
     trim_stats_dict,
 )
 from cc_lint.report import default_markdown_path, render_report
+from cc_lint.vary import merge_vary
 
 
 def _iter_records(results_dir: str) -> Iterator[Tuple[str, Dict[str, Any]]]:
@@ -85,6 +87,8 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
             merge_note(target, value)
         elif key == CSP_SIZES_KEY:
             merge_csp_sizes(merged["csp_max_by_site"], value)
+        elif key == VARY_KEY:
+            merge_vary(merged.setdefault("vary", {}), value)
         else:
             print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
 
