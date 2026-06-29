@@ -104,9 +104,7 @@ def main() -> None:
 
 def summarize_logs(
     log_dir: Path,
-) -> tuple[
-    List[WarcTiming], List[WarcFailure], List[WarcTimeout], List[MapperTiming]
-]:
+) -> tuple[List[WarcTiming], List[WarcFailure], List[WarcTimeout], List[MapperTiming]]:
     stderr_paths = sorted(log_dir.rglob("stderr.gz"))
     warcs: List[WarcTiming] = []
     failures: List[WarcFailure] = []

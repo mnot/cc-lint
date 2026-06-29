@@ -234,6 +234,122 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
         self.assertGreater(stats.csp_max_by_site["a.example"], 20)
         self.assertEqual(stats.csp_max_by_site["b.example"], 0)
 
+    def test_vary_composition_collected(self) -> None:
+        # accept-encoding,cookie on a.example (twice); user-agent on b.example;
+        # * on c.example; no Vary on d.example.
+        stats = StatsCollector()
+        for url, vary in [
+            ("http://a.example/1", b"Accept-Encoding, Cookie"),
+            ("http://a.example/2", b"Cookie, Accept-Encoding"),  # same recipe
+            ("http://b.example/", b"User-Agent"),
+            ("http://c.example/", b"*"),
+            ("http://d.example/", None),
+        ]:
+            linter = _linter_for(url)
+            linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+            headers = [(b"vary", vary)] if vary is not None else []
+            linter.process_headers(headers)
+            linter.finish_content(True)
+            stats.process_linter(linter)
+        data = stats.to_dict()
+        self.assertIn("vary", data)
+        vary = data["vary"]
+        self.assertEqual(vary["responses_with_vary"], 4)
+        # Recipe key is sorted+deduped, so both a.example responses collapse.
+        self.assertEqual(vary["recipes"]["occ"]["accept-encoding, cookie"], 2)
+        self.assertEqual(vary["recipes"]["occ"]["user-agent"], 1)
+        self.assertEqual(vary["recipes"]["occ"]["*"], 1)
+        # Marginals count each field-name; the wildcard is excluded.
+        self.assertEqual(vary["marginals"]["occ"]["cookie"], 2)
+        self.assertEqual(vary["marginals"]["occ"]["accept-encoding"], 2)
+        self.assertNotIn("*", vary["marginals"]["occ"])
+
+    def test_no_vary_key_when_absent(self) -> None:
+        stats = StatsCollector()
+        linter = _linter_for("http://nothing.example/")
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        linter.process_headers([(b"content-type", b"text/html")])
+        linter.finish_content(True)
+        stats.process_linter(linter)
+        self.assertNotIn("vary", stats.to_dict())
+
+    def test_structured_field_parse_error_populates_field_error(self) -> None:
+        # A malformed structured-field header fires STRUCTURED_FIELD_PARSE_ERROR,
+        # whose vars are field_name/problem/context (not `error`). The derived
+        # `field_error` var must compose `<field_name>: <problem>` so the
+        # report's "Field → parse error" breakdown has data to render.
+        stats = StatsCollector()
+        linter = _linter_for("http://x.example/")
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        # Accept-CH is an sf-list; trailing garbage makes it unparseable.
+        linter.process_headers([(b"Accept-CH", b'"""')])
+        linter.finish_content(True)
+        stats.process_linter(linter)
+
+        note = stats.note_data["STRUCTURED_FIELD_PARSE_ERROR"]
+        field_error = note["vars"]["field_error"]
+        self.assertEqual(len(field_error), 1)
+        key = next(iter(field_error))
+        self.assertTrue(key.startswith("Accept-CH: "))
+        self.assertNotIn("\n", key)
+        self.assertEqual(field_error[key], 1)
+
+    def test_subnotes_are_counted(self) -> None:
+        # httplint attaches strength/quality findings as children via
+        # Note.add_child (appended to note.subnotes), not to linter.notes.
+        # The collector must recurse into them; otherwise the entire
+        # strength layer (CSP_UNSAFE_INLINE, HSTS_NO_SUBDOMAINS, ...) is
+        # silently dropped. Regression test for #5 / #2.
+        stats = StatsCollector()
+        linter = _linter_for("http://a.example/")
+        parent: Any = _InfoNote("s")
+        parent.add_child(_WarnNote)
+        _attach_note(linter, parent)
+        stats.process_linter(linter)
+        self.assertEqual(stats.note_data[_InfoNote.__name__]["count"], 1)
+        self.assertEqual(stats.note_data[_WarnNote.__name__]["count"], 1)
+        # The child's WARN should bump the response's max severity above the
+        # parent's INFO.
+        self.assertEqual(stats.severity_counts.get("warn"), 1)
+        self.assertIsNone(stats.severity_counts.get("info"))
+
+    def test_nested_subnotes_are_counted(self) -> None:
+        # add_child can be called on a child, producing grandchildren; the
+        # walk is depth-first, not single-level.
+        stats = StatsCollector()
+        linter = _linter_for("http://a.example/")
+        parent: Any = _InfoNote("s")
+        child = parent.add_child(_InfoNote)
+        child.add_child(_WarnNote)
+        _attach_note(linter, parent)
+        stats.process_linter(linter)
+        self.assertEqual(stats.note_data[_InfoNote.__name__]["count"], 2)
+        self.assertEqual(stats.note_data[_WarnNote.__name__]["count"], 1)
+
+    def test_hsts_and_csp_strength_subnotes_fire(self) -> None:
+        # End-to-end over real headers: a weak HSTS (no includeSubDomains,
+        # short max-age) and a CSP with 'unsafe-inline' must surface their
+        # strength sub-notes, which httplint emits as subnotes of HSTS_VALID
+        # and CONTENT_SECURITY_POLICY. Regression test for #5 / #2.
+        stats = StatsCollector()
+        linter = _linter_for("https://example.com/")
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        linter.process_headers(
+            [
+                (b"strict-transport-security", b"max-age=600"),
+                (b"content-security-policy", b"script-src 'unsafe-inline'"),
+            ]
+        )
+        linter.finish_content(True)
+        stats.process_linter(linter)
+        for note_id in (
+            "HSTS_NO_SUBDOMAINS",
+            "HSTS_SHORT_MAX_AGE",
+            "CSP_UNSAFE_INLINE",
+        ):
+            self.assertIn(note_id, stats.note_data, f"{note_id} was dropped")
+            self.assertEqual(stats.note_data[note_id]["count"], 1)
+
     def test_to_dict_carries_sites_hll_and_note_data(self) -> None:
         stats = StatsCollector()
         linter = _linter_for("http://a.example/")

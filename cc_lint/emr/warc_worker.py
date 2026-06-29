@@ -69,14 +69,10 @@ def process_warc_to_file(  # pylint: disable=too-many-positional-arguments
             try:
                 linter = lint_record(record)
                 if linter is not None:
-                    if top_sites is None or is_in_top_sites(
-                        linter.base_uri, top_sites
-                    ):
+                    if top_sites is None or is_in_top_sites(linter.base_uri, top_sites):
                         stats.process_linter(linter)
             except Exception as exc:
-                sys.stderr.write(
-                    f"WARN: lint failed for record in {raw_path}: {exc}\n"
-                )
+                sys.stderr.write(f"WARN: lint failed for record in {raw_path}: {exc}\n")
                 sys.stderr.flush()
             processing_time += time.perf_counter() - process_start
 

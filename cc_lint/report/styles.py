@@ -5,7 +5,6 @@ methodology / truncation explanatory text can be reviewed and
 edited in isolation.
 """
 
-
 METHODOLOGY_NOTE = (
     "Percentages describe this Common Crawl result set, not the entire web. "
     "Counts reflect what Common Crawl fetched (after robots.txt, WAF, paywall, "
@@ -164,6 +163,16 @@ STYLE = """
   ul.errors > li { margin: .25rem 0; }
   ul.errors .err { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
+  details.field-samples { margin: .35rem 0 0; }
+  details.field-samples > summary { cursor: pointer; color: var(--muted); font-size: .85em; }
+  .field-val {
+    display: block;
+    margin-left: 1.5em;
+    font-size: .8em;
+    color: var(--muted);
+    word-break: break-all;
+  }
+
   table.var-table, table.data-table {
     border-collapse: collapse;
     width: 100%;
@@ -237,6 +246,11 @@ STYLE = """
     height: 8px;
     vertical-align: middle;
     min-width: 1px;
+  }
+
+  span.vary-synthetic {
+    color: var(--bad-fg);
+    font-weight: 600;
   }
 
   .health-bar {

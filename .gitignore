@@ -1,3 +1,4 @@
+# DO NOT EDIT outside marked project regions — managed by https://github.com/mnot/pyproject-tmpl
 *.pyc
 __pycache__
 .DS_Store
@@ -10,6 +11,8 @@ __pycache__
 /.pytest_cache
 /.venv
 /*.egg-info
+
+# === pyproject-tmpl: start "extras" ===
 /warc
 /paths.txt
 /report.html
@@ -18,3 +21,5 @@ __pycache__
 /cc-lint.mk
 /results
 /wheels
+# === pyproject-tmpl: end "extras" ===
+

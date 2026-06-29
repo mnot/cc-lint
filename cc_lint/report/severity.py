@@ -17,7 +17,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from httplint.note import Note, categories, levels
 
-
 # Stable ordering of severities for sorting and for the "highest first"
 # tie-break inside category sections.
 SEVERITY_ORDER = {"bad": 4, "warn": 3, "info": 2, "good": 1}

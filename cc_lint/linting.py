@@ -170,8 +170,7 @@ def _lint_warc_record(record: Any) -> Optional[HttpResponseLinter]:
     )
 
     headers = [
-        (_as_latin1(name), _as_latin1(value))
-        for name, value in http_headers.headers
+        (_as_latin1(name), _as_latin1(value)) for name, value in http_headers.headers
     ]
     linter.process_headers(headers)
 

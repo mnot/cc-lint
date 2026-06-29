@@ -1,18 +1,19 @@
 """Markdown renderer for cc-lint stats.
 
 Produces a plain-text-friendly version of the same data the HTML report
-surfaces, suitable for terminals, GitHub previews, and copy-paste into
-chat. Output is intentionally narrower in scope than the HTML: the
-markdown view focuses on the high-signal information (totals, top notes,
-top headers) and elides interactive affordances like the unseen-notes
-collapsibles or the per-(var, val) sample lists.
+surfaces, suitable for terminals, GitHub previews, copy-paste into chat,
+and -- the primary use -- feeding to an LLM for analysis. Output is
+narrower than the HTML in chrome (it elides interactive affordances like
+the unseen-notes collapsibles), but it carries the same high-signal data,
+including the per-field sample URLs and their captured on-the-wire header
+values, which are exactly what downstream analysis needs.
 """
 
 from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
-from cc_lint.hll import hll_estimate
 from cc_lint.histograms import bucket_order
+from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import (
     build_category_index,
     build_severity_index,
@@ -22,6 +23,16 @@ from cc_lint.report.severity import (
     possible_note_ids,
 )
 from cc_lint.report.styles import METHODOLOGY_NOTE
+from cc_lint.vary import (
+    ACCEPT_ENCODING,
+    AE_ONLY_LABEL,
+    HIGH_INTEREST_AXES,
+    count_nonstandard,
+    factor_out,
+    is_nonstandard_token,
+    is_registered_field,
+    recipe_tokens,
+)
 
 _NOTE_SUMMARIES = build_summary_index()
 
@@ -119,11 +130,36 @@ def _fmt_byte_size_md(byte_size: int) -> str:
     return f"{byte_size / (1024 * 1024):.1f} MB"
 
 
+def _render_value_samples(
+    value_samples: Dict[str, List[Dict[str, Any]]], shown_values: List[str]
+) -> List[str]:
+    """Render per-field sample URLs + captured header values as a nested list.
+
+    ``shown_values`` is the set of values whose rows the table actually showed,
+    so samples for elided long-tail values aren't dangled without context.
+    """
+    blocks: List[str] = []
+    for val in shown_values:
+        samples = value_samples.get(val) or []
+        urls = [s for s in samples if s.get("url")]
+        if not urls:
+            continue
+        blocks.append(f"- `{_md_escape_pipe(val)}`")
+        for sample in urls:
+            captured = sample.get("vars", {}).get("field_values")
+            suffix = f" — `{captured}`" if captured else ""
+            blocks.append(f"  - {sample['url']}{suffix}")
+    if not blocks:
+        return []
+    return ["Samples by value:", "", *blocks, ""]
+
+
 def _render_var_table(
     var_name: str,
     counts: Dict[str, int],
     field_counts: Dict[str, int],
     largest_by_value: Optional[Dict[str, int]] = None,
+    value_samples: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[str]:
     is_field_name = var_name == "field_name"
     headers = ["Value", "Note fires"]
@@ -160,6 +196,10 @@ def _render_var_table(
     if len(counts) > 25:
         lines.append(f"_… {len(counts) - 25} more values not shown …_")
     lines.append("")
+    if value_samples:
+        lines.extend(
+            _render_value_samples(value_samples, [val for val, _ in sorted_vals])
+        )
     return lines
 
 
@@ -203,16 +243,21 @@ def _render_note_block(
     truncated_vars = note_data.get("truncated_vars") or {}
     numeric_maxes: Dict[str, Dict[str, int]] = note_data.get("numeric_maxes") or {}
     field_size_max = numeric_maxes.get("field_size") or {}
+    var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = (
+        note_data.get("var_samples") or {}
+    )
+    field_samples = var_samples.get("field_name") or {}
     var_stats = note_data.get("vars") or {}
     for var_name, counts in var_stats.items():
         if not counts:
             continue
         if truncated_vars.get(var_name):
-            lines.append(
-                f"_{var_name}: long tail elided during shuffle; head only._"
-            )
+            lines.append(f"_{var_name}: long tail elided during shuffle; head only._")
         largest = field_size_max if var_name == "field_name" else None
-        lines.extend(_render_var_table(var_name, counts, field_counts, largest))
+        samples = field_samples if var_name == "field_name" else None
+        lines.extend(
+            _render_var_table(var_name, counts, field_counts, largest, samples)
+        )
 
     by_layer = note_data.get("by_layer") or {}
     if by_layer:
@@ -338,9 +383,8 @@ def _render_notes_section(  # pylint: disable=too-many-positional-arguments
             ordered.append(category)
     lines = ["## Notes", ""]
     for category in ordered:
-        def _key(
-            triple: Tuple[str, Dict[str, Any], str]
-        ) -> Tuple[int, int, int, str]:
+
+        def _key(triple: Tuple[str, Dict[str, Any], str]) -> Tuple[int, int, int, str]:
             note_id, data, sev = triple
             if not isinstance(data, dict):
                 return (0, 0, 0, note_id)
@@ -355,8 +399,7 @@ def _render_notes_section(  # pylint: disable=too-many-positional-arguments
 
         entries = sorted(by_category[category], key=_key)
         total_occ = sum(
-            int(d.get("count", 0)) if isinstance(d, dict) else 0
-            for _, d, _s in entries
+            int(d.get("count", 0)) if isinstance(d, dict) else 0 for _, d, _s in entries
         )
         cat_pct = ""
         if total_notes > 0:
@@ -397,9 +440,7 @@ def _render_field_counts(
     top = sorted(filtered.items(), key=lambda kv: kv[1], reverse=True)[:50]
     for name, count in top:
         pct = (count / total_responses * 100) if total_responses else 0
-        lines.append(
-            f"| {_md_escape_pipe(name)} | {_fmt_count(count)} | {pct:.1f}% |"
-        )
+        lines.append(f"| {_md_escape_pipe(name)} | {_fmt_count(count)} | {pct:.1f}% |")
     lines.append("")
     return lines
 
@@ -439,6 +480,91 @@ def _render_csp_section(csp_sizes: Dict[str, int]) -> List[str]:
         count = counts[idx]
         pct = (count / total * 100) if total else 0
         lines.append(f"| {label} | {_fmt_count(count)} | {pct:.1f}% |")
+    lines.append("")
+    return lines
+
+
+def _vary_pct(count: int, denom: int) -> str:
+    return f"{count / denom * 100:.2f}%" if denom else "—"
+
+
+def _vary_sites(hlls: Dict[str, Any], key: str) -> str:
+    registers = hlls.get(key)
+    if isinstance(registers, list) and registers:
+        est = hll_estimate(registers)
+        if est > 0:
+            return f"~{_fmt_count(est)}"
+    return "—"
+
+
+def _recipe_label_md(recipe: str) -> str:
+    """Recipe string with non-standard tokens bolded inline.
+
+    Mirrors the HTML renderer's ``vary-synthetic`` highlighting so both
+    views flag *which* tokens are synthetic, not just how many (the
+    aggregate count is the adjacent column). The AE-only placeholder is
+    not a token list, so it renders verbatim.
+    """
+    if recipe == AE_ONLY_LABEL:
+        return _md_escape_pipe(recipe)
+    parts = []
+    for token in recipe_tokens(recipe):
+        escaped = _md_escape_pipe(token)
+        parts.append(f"**{escaped}**" if is_nonstandard_token(token) else escaped)
+    return ", ".join(parts)
+
+
+def _render_recipe_md(recipe_dict: Dict[str, Any], denom: int) -> List[str]:
+    occ: Dict[str, int] = recipe_dict.get("occ", {})
+    hlls: Dict[str, Any] = recipe_dict.get("hlls", {})
+    if not occ:
+        return ["_No data._", ""]
+    ordered = sorted(occ.items(), key=lambda kv: kv[1], reverse=True)
+    lines = [
+        "| Recipe | Responses | % of Vary | Sites | Synthetic tokens |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for recipe, count in ordered[:25]:
+        synth = 0 if recipe == AE_ONLY_LABEL else count_nonstandard(recipe)
+        lines.append(
+            f"| {_recipe_label_md(recipe)} | {_fmt_count(count)} | "
+            f"{_vary_pct(count, denom)} | {_vary_sites(hlls, recipe)} | "
+            f"{_fmt_count(synth) if synth else '—'} |"
+        )
+    if len(ordered) > 25:
+        lines.append(f"_… {len(ordered) - 25} more recipes not shown …_")
+    lines.append("")
+    return lines
+
+
+def _render_marginal_md(
+    entries: List[Tuple[str, int]],
+    hlls: Dict[str, Any],
+    denom: int,
+    show_registered: bool,
+    limit: int = 25,
+) -> List[str]:
+    if not entries:
+        return ["_None observed._", ""]
+    headers = ["Field-name", "Responses", "% of Vary", "Sites"]
+    if show_registered:
+        headers.append("Registered?")
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for token, count in entries[:limit]:
+        cells = [
+            _md_escape_pipe(token),
+            _fmt_count(count),
+            _vary_pct(count, denom),
+            _vary_sites(hlls, token),
+        ]
+        if show_registered:
+            cells.append("yes" if is_registered_field(token) else "no")
+        lines.append("| " + " | ".join(cells) + " |")
+    if len(entries) > limit:
+        lines.append(f"_… {len(entries) - limit} more not shown …_")
     lines.append("")
     return lines
 
@@ -515,9 +641,7 @@ def _render_infrastructure(
     return lines
 
 
-def _render_asn(
-    asn_counts: Dict[str, int], total_responses: int
-) -> List[str]:
+def _render_asn(asn_counts: Dict[str, int], total_responses: int) -> List[str]:
     if not asn_counts:
         return []
     try:
@@ -540,10 +664,78 @@ def _render_asn(
         except ValueError:
             label = ""
         pct = (count / total_responses * 100) if total_responses else 0
-        lines.append(
-            f"| AS{asn_str} | {label} | {_fmt_count(count)} | {pct:.1f}% |"
-        )
+        lines.append(f"| AS{asn_str} | {label} | {_fmt_count(count)} | {pct:.1f}% |")
     lines.append("")
+    return lines
+
+
+def _render_vary_section(vary: Dict[str, Any]) -> List[str]:
+    if not vary:
+        return []
+    denom = int(vary.get("responses_with_vary", 0))
+    if denom <= 0:
+        return []
+    recipes: Dict[str, Any] = vary.get("recipes") or {}
+    marginals: Dict[str, Any] = vary.get("marginals") or {}
+    marg_occ: Dict[str, int] = marginals.get("occ", {})
+    marg_hlls: Dict[str, Any] = marginals.get("hlls", {})
+
+    lines = [
+        "## Vary composition",
+        "",
+        f"Composition of the `Vary` header across the {_fmt_count(denom)} "
+        "responses that carried one. A *recipe* is the full lowercased, "
+        "deduped, sorted set of field-names in a response's `Vary`. "
+        "*Responses* is occurrence-weighted; *Sites* is a HyperLogLog "
+        "estimate of distinct operators.",
+        "",
+        "### Top Vary recipes",
+        "",
+    ]
+    if vary.get("recipes_truncated"):
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    lines.extend(_render_recipe_md(recipes, denom))
+
+    lines.append("### Top Vary recipes (Accept-Encoding factored out)")
+    lines.append("")
+    factored = factor_out(recipes, ACCEPT_ENCODING, AE_ONLY_LABEL)
+    lines.extend(_render_recipe_md(factored, denom))
+
+    lines.append("### High-interest axes")
+    lines.append("")
+    axes_entries = [(axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES]
+    lines.extend(
+        _render_marginal_md(axes_entries, marg_hlls, denom, show_registered=False)
+    )
+
+    lines.append("### Vary field-names (marginals)")
+    lines.append("")
+    if vary.get("marginals_truncated"):
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    top_marginals = sorted(marg_occ.items(), key=lambda kv: kv[1], reverse=True)
+    lines.extend(
+        _render_marginal_md(top_marginals, marg_hlls, denom, show_registered=True)
+    )
+
+    lines.append("### Non-standard Vary tokens")
+    lines.append("")
+    lines.append(
+        "Tokens httplint's field registry does not recognise (≈ not "
+        "IANA-registered), approximating the synthetic cache-key population. "
+        "A **lower bound**: some synthetic schemes are consumed at the edge "
+        "and never appear in `Vary`, and the classification is approximate."
+    )
+    lines.append("")
+    nonstandard = sorted(
+        ((t, c) for t, c in marg_occ.items() if is_nonstandard_token(t)),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    lines.extend(
+        _render_marginal_md(nonstandard, marg_hlls, denom, show_registered=False)
+    )
     return lines
 
 
@@ -588,8 +780,7 @@ def _render_unseen(
     if request_only:
         lines.append(
             f"**Request-only — unreachable for response linting "
-            f"({len(request_only)}):** "
-            + ", ".join(f"`{n}`" for n in request_only)
+            f"({len(request_only)}):** " + ", ".join(f"`{n}`" for n in request_only)
         )
         lines.append("")
     return lines
@@ -630,9 +821,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
         )
     )
     lines.extend(_render_health_section(severity_counts))
-    lines.extend(
-        _render_category_overview(notes, category_index, category_order)
-    )
+    lines.extend(_render_category_overview(notes, category_index, category_order))
     lines.extend(
         _render_notes_section(
             notes,
@@ -659,6 +848,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
     )
     lines.extend(_render_asn(data.get("asn_counts") or {}, total_responses))
     lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
+    lines.extend(_render_vary_section(data.get("vary") or {}))
     lines.extend(
         _render_unprocessed(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))

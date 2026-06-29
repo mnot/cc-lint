@@ -61,9 +61,7 @@ class TestMergeResults(unittest.TestCase):
             )
             merged = merge_results(results)
             self.assertEqual(merged["total_responses"], 8)
-            self.assertEqual(
-                merged["field_counts"], {"h": 5, "k": 2}
-            )
+            self.assertEqual(merged["field_counts"], {"h": 5, "k": 2})
             self.assertEqual(merged["notes"]["BAD_SYNTAX"]["count"], 3)
             self.assertEqual(merged["notes"]["CC_DUP"]["count"], 7)
             self.assertEqual(merged["run_context"]["crawl_id"], "CC-A")
@@ -137,6 +135,58 @@ class TestMergeResults(unittest.TestCase):
             self.assertEqual(
                 merged["severity_counts"],
                 {"bad": 5, "warn": 40, "info": 20, "clean": 85},
+            )
+
+    def test_vary_blocks_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as results:
+            _write_part(
+                os.path.join(results, "part-00000"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 5,
+                            "field_counts": {},
+                            "unprocessed_counts": {},
+                        },
+                    ),
+                    (
+                        "vary",
+                        {
+                            "responses_with_vary": 3,
+                            "recipes": {"occ": {"accept-encoding": 3}, "hlls": {}},
+                            "marginals": {
+                                "occ": {"accept-encoding": 3},
+                                "hlls": {},
+                            },
+                        },
+                    ),
+                ],
+            )
+            _write_part(
+                os.path.join(results, "part-00001"),
+                [
+                    (
+                        "vary",
+                        {
+                            "responses_with_vary": 2,
+                            "recipes": {
+                                "occ": {"accept-encoding": 1, "cookie": 1},
+                                "hlls": {},
+                            },
+                            "marginals": {
+                                "occ": {"accept-encoding": 1, "cookie": 1},
+                                "hlls": {},
+                            },
+                        },
+                    ),
+                ],
+            )
+            merged = merge_results(results)
+            self.assertEqual(merged["vary"]["responses_with_vary"], 5)
+            self.assertEqual(
+                merged["vary"]["recipes"]["occ"],
+                {"accept-encoding": 4, "cookie": 1},
             )
 
     def test_skips_malformed_lines(self) -> None:

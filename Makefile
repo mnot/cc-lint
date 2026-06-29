@@ -77,6 +77,12 @@ report.html: paths.txt
 .PHONY: test
 test: test_py
 
+# Pytest target -- the upstream Makefile.pyproject template no longer ships
+# a test_py rule, so define it here.
+.PHONY: test_py
+test_py: venv
+	PYTHONPATH=$(VENV) $(VENV)/python -m pytest
+
 .PHONY: clean
 clean: clean_py clean-local
 

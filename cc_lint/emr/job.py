@@ -15,7 +15,8 @@ import sys
 import tempfile
 import time
 import traceback
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from multiprocessing import get_context
 from typing import Any, Dict, Generator, Iterator, List, Optional, Set, Tuple
 
@@ -24,8 +25,8 @@ from cc_lint.emr.compat import install_mrjob_pipes_compat
 install_mrjob_pipes_compat()
 
 # pylint: disable=wrong-import-position,wrong-import-order,ungrouped-imports
-from mrjob.job import MRJob
-from mrjob.protocol import JSONProtocol
+from mrjob.job import MRJob  # type: ignore[import-untyped]
+from mrjob.protocol import JSONProtocol  # type: ignore[import-untyped]
 
 import cc_lint
 from cc_lint.emr.warc_worker import (
@@ -35,8 +36,9 @@ from cc_lint.emr.warc_worker import (
 )
 from cc_lint.hll import hll_merge
 from cc_lint.ipasn import IpAsnTable, load_ipasn
-from cc_lint.stats import StatsCollector
+from cc_lint.stats import VAR_SAMPLE_LIMIT, StatsCollector
 from cc_lint.top_sites import load_top_sites
+from cc_lint.vary import merge_vary, trim_vary
 
 
 def _httplint_version() -> str:
@@ -62,7 +64,8 @@ def _build_run_context(options: Any) -> Dict[str, Any]:
 
 
 SAMPLE_LIMIT = 5
-VAR_SAMPLE_LIMIT = 15
+# VAR_SAMPLE_LIMIT is imported from cc_lint.stats so the collection-side cap and
+# this reducer-side merge cap stay equal (single source of truth).
 
 # Long-tail caps applied before shuffle and again at reducer output. The web
 # generates extremely long-tailed value distributions for things like
@@ -72,6 +75,7 @@ VAR_SAMPLE_LIMIT = 15
 TOP_K_VAR_VALUES = 2000  # entries kept per vars[var_name] counts dict
 TOP_K_FIELD_COUNTS = 5000  # entries kept in field_counts / unprocessed_counts
 TOP_K_ASN = 5000  # entries kept in asn_counts (top networks by response count)
+TOP_K_RECIPES = 2000  # entries kept per Vary recipe / marginal dict
 
 
 def _merge_counts(target: Dict[str, int], source: Dict[str, int]) -> None:
@@ -207,9 +211,7 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     _merge_layer_stats(target, source)
     target.setdefault("notes", {})
     for note_id, note in source.get("notes", {}).items():
-        target["notes"].setdefault(
-            note_id, {"count": 0, "samples": [], "vars": {}}
-        )
+        target["notes"].setdefault(note_id, {"count": 0, "samples": [], "vars": {}})
         merge_note(target["notes"][note_id], note)
     src_hll = source.get("sites_hll")
     if src_hll:
@@ -221,11 +223,15 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     if src_csp:
         target.setdefault("csp_max_by_site", {})
         merge_csp_sizes(target["csp_max_by_site"], src_csp)
+    src_vary = source.get("vary")
+    if src_vary:
+        merge_vary(target.setdefault("vary", {}), src_vary)
 
 
 GLOBALS_KEY = "globals"
 NOTE_KEY_PREFIX = "note:"
 CSP_SIZES_KEY = "csp_sizes"
+VARY_KEY = "vary"
 
 # Defensive cap on the per-site CSP-size dict. The dict naturally bounds at
 # the cardinality of distinct sites the mapper saw (~ TOP_N in practice),
@@ -389,6 +395,8 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
         stats["asn_counts"], was_trunc = _trim_counts(stats["asn_counts"], TOP_K_ASN)
         if was_trunc:
             stats["truncated_asn_counts"] = True
+    if stats.get("vary"):
+        trim_vary(stats["vary"], TOP_K_RECIPES)
     for note in stats.get("notes", {}).values():
         var_counts = note.get("vars", {})
         retained_vals_per_var: Dict[str, set[str]] = {}
@@ -536,14 +544,10 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         self.warcs_seen += 1
 
         try:
-            sys.stderr.write(
-                f"INFO: starting WARC {self.warcs_seen}: {raw_path}\n"
-            )
+            sys.stderr.write(f"INFO: starting WARC {self.warcs_seen}: {raw_path}\n")
             sys.stderr.flush()
             if self.warcs_seen == 1 and self._s3_jitter > 0:
-                sys.stderr.write(
-                    f"INFO: jitter sleep {self._s3_jitter:.1f}s\n"
-                )
+                sys.stderr.write(f"INFO: jitter sleep {self._s3_jitter:.1f}s\n")
                 sys.stderr.flush()
                 time.sleep(self._s3_jitter)
                 self.increment_counter(
@@ -607,12 +611,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                     self.increment_counter("status", "warcs_failed", 1)
                     self.increment_counter("status", "warc_timed_out", 1)
                     return None
-                self.set_status(
-                    f"Downloading WARC {self.warcs_seen}: {raw_path}"
-                )
+                self.set_status(f"Downloading WARC {self.warcs_seen}: {raw_path}")
                 sys.stderr.write(
-                    f"INFO: still downloading WARC {self.warcs_seen}: "
-                    f"{raw_path}\n"
+                    f"INFO: still downloading WARC {self.warcs_seen}: " f"{raw_path}\n"
                 )
                 sys.stderr.flush()
 
@@ -638,9 +639,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         self.increment_counter("status", "records_processed", result.records_seen)
         self.increment_counter("timing", "warc_total_ms", result.total_ms)
         self.increment_counter("timing", "record_process_ms", result.process_ms)
-        self.increment_counter(
-            "timing", "iterator_download_ms", result.iterator_ms
-        )
+        self.increment_counter("timing", "iterator_download_ms", result.iterator_ms)
         self.increment_counter("timing", "warcs_completed", 1)
         self.increment_counter("timing", "records_seen", result.records_seen)
 
@@ -652,9 +651,7 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             self._running_dict: Dict[str, Any] = self.stats.to_dict()
         return self._running_dict
 
-    def _record_warc_failure(
-        self, raw_path: str, exit_code: Optional[int]
-    ) -> None:
+    def _record_warc_failure(self, raw_path: str, exit_code: Optional[int]) -> None:
         exit_label = "unknown" if exit_code is None else str(exit_code)
         signal_label = ""
         bucket = _failure_bucket(exit_code)
@@ -701,6 +698,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         csp_sizes = stats.get("csp_max_by_site") or {}
         if csp_sizes:
             yield CSP_SIZES_KEY, _trim_csp_sizes(csp_sizes)
+        vary = stats.get("vary") or {}
+        if vary:
+            yield VARY_KEY, vary
 
     # No combiner: mapper_final emits each (key, value) exactly once per
     # mapper, so there is nothing for a combiner to fold. The mrjob default
@@ -724,6 +724,12 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             for value in values:
                 merge_csp_sizes(merged_csp, value)
             yield CSP_SIZES_KEY, _trim_csp_sizes(merged_csp)
+        elif key == VARY_KEY:
+            merged_vary: Dict[str, Any] = {}
+            for value in values:
+                merge_vary(merged_vary, value)
+            trim_vary(merged_vary, TOP_K_RECIPES)
+            yield VARY_KEY, merged_vary
 
 
 def main() -> None:

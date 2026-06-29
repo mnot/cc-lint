@@ -6,16 +6,29 @@ through :func:`html.escape`; the only literal HTML in these strings is the
 fixed page structure.
 """
 
+# pylint: disable=too-many-lines
+# A flat collection of independent section renderers; splitting it would only
+# scatter closely-related report code across modules without reducing coupling.
+
 import html
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.fingerprint import UNMATCHED
-from cc_lint.hll import hll_estimate
 from cc_lint.histograms import bucket_order
+from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
-
+from cc_lint.vary import (
+    ACCEPT_ENCODING,
+    AE_ONLY_LABEL,
+    HIGH_INTEREST_AXES,
+    count_nonstandard,
+    factor_out,
+    is_nonstandard_token,
+    is_registered_field,
+    recipe_tokens,
+)
 
 REDBOT_BASE = "https://redbot.org/check?uri="
 
@@ -56,13 +69,50 @@ def _format_vars(note_vars: Dict[str, Any]) -> str:
     return f"<span class=\"vars\">{', '.join(items)}</span>"
 
 
-def _sample_li(sample: Dict[str, Any]) -> str:
-    url = sample.get("url", "")
+def _sample_li_html(url: str, trailing_html: str) -> str:
+    """Render a sample list item: a redbot link to ``url`` plus trailing HTML.
+
+    The single place the sample ``<li>`` / redbot-link markup lives, so the
+    note-level and per-field renderers can't drift on escaping, rel/target, or
+    the redbot URL. ``trailing_html`` is already-escaped markup appended after
+    the link (the vars span or the captured-value code element).
+    """
     if not url:
         return ""
     return (
         f'<li><a href="{html.escape(_redbot_link(url))}" target="_blank" rel="noopener">'
-        f"{html.escape(url)}</a>{_format_vars(sample.get('vars', {}))}</li>"
+        f"{html.escape(url)}</a>{trailing_html}</li>"
+    )
+
+
+def _sample_li(sample: Dict[str, Any]) -> str:
+    return _sample_li_html(sample.get("url", ""), _format_vars(sample.get("vars", {})))
+
+
+def _field_sample_li(sample: Dict[str, Any]) -> str:
+    """Render a per-field sample, surfacing the captured malformed value.
+
+    Unlike :func:`_sample_li`, this shows only the header value(s) seen on the
+    wire (``field_values``) rather than the full note-vars dump, so the reader
+    can characterise a field's malformed population at a glance.
+    """
+    raw_values = sample.get("vars", {}).get("field_values")
+    value_html = ""
+    if raw_values:
+        value_html = f'<code class="field-val">{html.escape(str(raw_values))}</code>'
+    return _sample_li_html(sample.get("url", ""), value_html)
+
+
+def _field_samples_details(samples: List[Dict[str, Any]]) -> str:
+    """Collapsible list of per-field sample URLs + captured values, or ""."""
+    items = "".join(_field_sample_li(s) for s in samples)
+    if not items:
+        return ""
+    return (
+        '<details class="field-samples">'
+        f"<summary>Samples ({_format_count(len(samples))})</summary>"
+        f'<ul class="samples">{items}</ul>'
+        "</details>"
     )
 
 
@@ -83,9 +133,7 @@ def _format_pill(label: str, value: str, modifier: str = "") -> str:
     )
 
 
-def render_run_context(
-    run_context: Dict[str, Any], finalized_at: Optional[str]
-) -> str:
+def render_run_context(run_context: Dict[str, Any], finalized_at: Optional[str]) -> str:
     pills: List[str] = []
     crawl_id = run_context.get("crawl_id") or ""
     if crawl_id:
@@ -155,18 +203,18 @@ def render_header_stats(
     sites_card = ""
     if distinct_sites_estimate is not None:
         sites_card = (
-            f'<div><dt>Distinct sites analyzed</dt><dd>~{_format_count(distinct_sites_estimate)}'
-            ' <small>HLL estimate</small></dd></div>'
+            f"<div><dt>Distinct sites analyzed</dt><dd>~{_format_count(distinct_sites_estimate)}"
+            " <small>HLL estimate</small></dd></div>"
         )
     return (
         '<header class="hero">'
-        '<h1>Common Crawl Response Lint</h1>'
+        "<h1>Common Crawl Response Lint</h1>"
         '<dl class="stat-grid">'
-        f'<div><dt>Responses analyzed</dt><dd>{_format_count(total_responses)}</dd></div>'
-        f'{sites_card}'
-        f'<div><dt>Note occurrences</dt><dd>{_format_count(total_notes)}'
-        ' <small>across all responses</small></dd></div>'
-        f'<div><dt>Distinct note types seen</dt><dd>{_format_count(seen_count)}</dd></div>'
+        f"<div><dt>Responses analyzed</dt><dd>{_format_count(total_responses)}</dd></div>"
+        f"{sites_card}"
+        f"<div><dt>Note occurrences</dt><dd>{_format_count(total_notes)}"
+        " <small>across all responses</small></dd></div>"
+        f"<div><dt>Distinct note types seen</dt><dd>{_format_count(seen_count)}</dd></div>"
         "</dl>"
         "</header>"
     )
@@ -191,20 +239,20 @@ def _render_field_error_block(counts: Dict[str, int]) -> str:
         error_items: List[str] = []
         for err, count in errors:
             error_items.append(
-                f"<li><span class=\"err\">{html.escape(err)}</span> "
-                f"<span class=\"muted\">({_format_count(count)})</span></li>"
+                f'<li><span class="err">{html.escape(err)}</span> '
+                f'<span class="muted">({_format_count(count)})</span></li>'
             )
         rows.append(
             "<tr>"
-            f"<th scope=\"row\">{html.escape(field)}"
-            f"<br><span class=\"muted\">{_format_count(total)}</span></th>"
+            f'<th scope="row">{html.escape(field)}'
+            f'<br><span class="muted">{_format_count(total)}</span></th>'
             f"<td><ul class=\"errors\">{''.join(error_items)}</ul></td>"
             "</tr>"
         )
     overflow = ""
     if len(sorted_fields) > 50:
         overflow = (
-            f"<tr><td colspan=\"2\" class=\"muted\">"
+            f'<tr><td colspan="2" class="muted">'
             f"… {len(sorted_fields) - 50} more fields not shown …</td></tr>"
         )
     return (
@@ -228,7 +276,9 @@ def _render_var_block(
     counts: Dict[str, int],
     field_counts: Dict[str, int],
     largest_by_value: Optional[Dict[str, int]] = None,
+    value_samples: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> str:
+    value_samples = value_samples or {}
     is_field_name = var_name == "field_name"
     bucket_seq = bucket_order(var_name)
     if bucket_seq is not None:
@@ -267,7 +317,11 @@ def _render_var_block(
 
     rows: List[str] = []
     for val, val_count in sorted_vals[:25]:
-        cells = [html.escape(val), _format_count(val_count)]
+        value_cell = html.escape(val)
+        samples = value_samples.get(val)
+        if samples:
+            value_cell += _field_samples_details(samples)
+        cells = [value_cell, _format_count(val_count)]
         if is_field_name:
             total = field_counts.get(val.lower(), 0)
             if total:
@@ -283,12 +337,12 @@ def _render_var_block(
 
     if len(sorted_vals) > 25:
         rows.append(
-            f"<tr><td colspan=\"{len(head_cells)}\" class=\"muted\">"
+            f'<tr><td colspan="{len(head_cells)}" class="muted">'
             f"… {len(sorted_vals) - 25} more values not shown …</td></tr>"
         )
 
     return (
-        f'<h4>{html.escape(_var_heading(var_name))}</h4>'
+        f"<h4>{html.escape(_var_heading(var_name))}</h4>"
         f'<table class="var-table">'
         f"<thead><tr>{header}</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
@@ -306,6 +360,10 @@ def _render_variable_stats(
     numeric_maxes: Dict[str, Dict[str, int]] = note_data.get("numeric_maxes") or {}
     # Currently the only configured max is field_size, keyed by field_name.
     field_size_max = numeric_maxes.get("field_size") or {}
+    var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = (
+        note_data.get("var_samples") or {}
+    )
+    field_samples = var_samples.get("field_name") or {}
     blocks: List[str] = []
     for var_name, counts in var_stats.items():
         if truncated_vars.get(var_name):
@@ -319,8 +377,11 @@ def _render_variable_stats(
             blocks.append(_render_field_error_block(counts))
         else:
             largest_by_value = field_size_max if var_name == "field_name" else None
+            value_samples = field_samples if var_name == "field_name" else None
             blocks.append(
-                _render_var_block(var_name, counts, field_counts, largest_by_value)
+                _render_var_block(
+                    var_name, counts, field_counts, largest_by_value, value_samples
+                )
             )
     return f'<div class="var-stats">{"".join(blocks)}</div>'
 
@@ -370,17 +431,15 @@ def _render_note_card(
     summary_template = _NOTE_SUMMARIES.get(note_id, "")
     summary_html = ""
     if summary_template:
-        summary_html = (
-            f'<p class="note-summary">{html.escape(summary_template)}</p>'
-        )
+        summary_html = f'<p class="note-summary">{html.escape(summary_template)}</p>'
 
     sample_html = ""
     if samples:
         items = "".join(_sample_li(s) for s in samples)
         sample_html = (
-            "<details class=\"note-samples\">"
+            '<details class="note-samples">'
             f"<summary>Samples ({_format_count(len(samples))})</summary>"
-            f"<ul class=\"samples\">{items}</ul>"
+            f'<ul class="samples">{items}</ul>'
             "</details>"
         )
 
@@ -409,12 +468,12 @@ def _render_note_card(
             )
     return (
         f'<details class="note severity-{severity}"{open_attr}>'
-        f'<summary>'
+        f"<summary>"
         f'<span class="badge badge-{severity}">{severity.upper()}</span>'
         f'<span class="note-id">{html.escape(note_id)}</span>'
-        f'{sites_pill}'
+        f"{sites_pill}"
         f'<span class="note-count" title="{html.escape(count_title)}">'
-        f'{_format_count(count)}</span>'
+        f"{_format_count(count)}</span>"
         "</summary>"
         f'<div class="note-body">{summary_html}{sample_html}{var_html}'
         f'{layers_html}</div>'
@@ -425,9 +484,7 @@ def _render_note_card(
 _SEVERITY_ORDER = {"bad": 4, "warn": 3, "info": 2, "good": 1}
 
 
-def _note_sort_key(
-    item: Tuple[str, Dict[str, Any]]
-) -> Tuple[int, int, int, str]:
+def _note_sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[int, int, int, str]:
     """Sort within a category: severity desc, then site cardinality desc,
     then occurrence count desc, then id asc.
     Notes seen on more sites surface above notes with many occurrences from a
@@ -481,8 +538,7 @@ def render_notes_section(  # pylint: disable=too-many-positional-arguments
     for category in ordered_categories:
         entries = sorted(by_category[category], key=_note_sort_key)
         total_occ = sum(
-            int(d.get("count", 0)) if isinstance(d, dict) else 0
-            for _, d in entries
+            int(d.get("count", 0)) if isinstance(d, dict) else 0 for _, d in entries
         )
         cards = [
             _render_note_card(
@@ -499,19 +555,14 @@ def render_notes_section(  # pylint: disable=too-many-positional-arguments
             cat_pct = f" ({total_occ / total_notes * 100:.1f}% of occurrences)"
         sections.append(
             f'<section class="note-category" id="cat-{html.escape(category.lower())}">'
-            f'<h3>{html.escape(_pretty_category(category))} '
+            f"<h3>{html.escape(_pretty_category(category))} "
             f'<span class="cat-totals">{_format_count(total_occ)} occurrences '
-            f'across {_format_count(len(entries))} note types{cat_pct}</span></h3>'
+            f"across {_format_count(len(entries))} note types{cat_pct}</span></h3>"
             f'<div class="note-list">{"".join(cards)}</div>'
             "</section>"
         )
 
-    return (
-        '<section id="notes">'
-        '<h2>Notes</h2>'
-        f'{"".join(sections)}'
-        "</section>"
-    )
+    return '<section id="notes">' "<h2>Notes</h2>" f'{"".join(sections)}' "</section>"
 
 
 _CATEGORY_LABELS = {
@@ -571,7 +622,7 @@ def render_health_summary(severity_counts: Dict[str, int]) -> str:
         )
     return (
         '<section id="health">'
-        '<h2>Response health</h2>'
+        "<h2>Response health</h2>"
         '<p class="muted">Each response is bucketed by the most severe '
         "httplint finding it produced. <em>Clean</em> means httplint found "
         "nothing worth reporting on that response. Per-response, not "
@@ -622,7 +673,7 @@ def render_category_overview(
         )
     return (
         '<section id="categories">'
-        '<h2>Findings by category</h2>'
+        "<h2>Findings by category</h2>"
         '<table class="data-table">'
         "<thead><tr><th>Category</th><th>Occurrences</th><th>%</th>"
         "<th>Note types fired</th></tr></thead>"
@@ -658,7 +709,7 @@ def render_field_counts_section(
         )
     return (
         '<section id="headers">'
-        '<h2>Top Response Headers</h2>'
+        "<h2>Top Response Headers</h2>"
         '<p class="muted">Most common response header names, with the share of '
         "responses that included at least one instance.</p>"
         f"{TRUNCATED_NOTE if truncated else ''}"
@@ -714,7 +765,7 @@ def render_csp_section(csp_sizes: Dict[str, int]) -> str:
         )
     return (
         '<section id="csp">'
-        '<h2>Content-Security-Policy size by site</h2>'
+        "<h2>Content-Security-Policy size by site</h2>"
         '<p class="muted">Distribution of the maximum CSP header byte size '
         "each site served, across all responses analyzed. A site appears in "
         "exactly one bucket -- the largest CSP it ever returned, regardless "
@@ -897,13 +948,193 @@ def render_unprocessed_section(
     )
     return (
         '<section id="unprocessed">'
-        '<h2>Top Unsupported Headers</h2>'
+        "<h2>Top Unsupported Headers</h2>"
         '<p class="muted">Header names httplint did not recognise, ranked by occurrence.</p>'
         f"{TRUNCATED_NOTE if truncated else ''}"
         '<table class="data-table">'
         "<thead><tr><th>Header</th><th>Count</th></tr></thead>"
         f"<tbody>{rows}</tbody>"
         "</table>"
+        "</section>"
+    )
+
+
+# ---- Vary composition ------------------------------------------------------
+
+
+def _pct_of_vary(count: int, denom: int) -> str:
+    return f"{count / denom * 100:.2f}%" if denom else "—"
+
+
+def _hll_sites(hlls: Dict[str, Any], key: str) -> Optional[int]:
+    registers = hlls.get(key)
+    if isinstance(registers, list) and registers:
+        est = hll_estimate(registers)
+        return est if est > 0 else None
+    return None
+
+
+def _recipe_label_html(recipe: str) -> str:
+    if recipe == AE_ONLY_LABEL:
+        return f"<em>{html.escape(recipe)}</em>"
+    parts: List[str] = []
+    for token in recipe_tokens(recipe):
+        escaped = html.escape(token)
+        if is_nonstandard_token(token):
+            parts.append(
+                '<span class="vary-synthetic" '
+                'title="non-standard / synthetic token">'
+                f"{escaped}</span>"
+            )
+        else:
+            parts.append(escaped)
+    return ", ".join(parts)
+
+
+def _render_recipe_table(recipe_dict: Dict[str, Any], denom: int) -> str:
+    occ: Dict[str, int] = recipe_dict.get("occ", {})
+    hlls: Dict[str, Any] = recipe_dict.get("hlls", {})
+    if not occ:
+        return '<p class="muted">No data.</p>'
+    ordered = sorted(occ.items(), key=lambda kv: kv[1], reverse=True)
+    head = ["Recipe", "Responses", "% of Vary", "Sites", "Synthetic tokens"]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for recipe, count in ordered[:25]:
+        sites = _hll_sites(hlls, recipe)
+        synth = 0 if recipe == AE_ONLY_LABEL else count_nonstandard(recipe)
+        cells = [
+            _recipe_label_html(recipe),
+            _format_count(count),
+            _pct_of_vary(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+            _format_count(synth) if synth else "—",
+        ]
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    if len(ordered) > 25:
+        rows.append(
+            f'<tr><td colspan="{len(head)}" class="muted">'
+            f"… {len(ordered) - 25} more recipes not shown …</td></tr>"
+        )
+    return (
+        '<table class="data-table vary-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def _render_marginal_table(
+    entries: List[Tuple[str, int]],
+    hlls: Dict[str, Any],
+    denom: int,
+    show_registered: bool,
+    limit: int = 25,
+) -> str:
+    if not entries:
+        return '<p class="muted">None observed.</p>'
+    head = ["Field-name", "Responses", "% of Vary", "Sites"]
+    if show_registered:
+        head.append("Registered?")
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for token, count in entries[:limit]:
+        sites = _hll_sites(hlls, token)
+        cells = [
+            html.escape(token),
+            _format_count(count),
+            _pct_of_vary(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+        ]
+        if show_registered:
+            cells.append("yes" if is_registered_field(token) else "no")
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    if len(entries) > limit:
+        rows.append(
+            f'<tr><td colspan="{len(head)}" class="muted">'
+            f"… {len(entries) - limit} more not shown …</td></tr>"
+        )
+    return (
+        '<table class="data-table vary-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def render_vary_section(vary: Dict[str, Any]) -> str:
+    """Render the Vary composition section (issue #3)."""
+    if not vary:
+        return ""
+    denom = int(vary.get("responses_with_vary", 0))
+    if denom <= 0:
+        return ""
+    recipes: Dict[str, Any] = vary.get("recipes") or {}
+    marginals: Dict[str, Any] = vary.get("marginals") or {}
+    marg_occ: Dict[str, int] = marginals.get("occ", {})
+    marg_hlls: Dict[str, Any] = marginals.get("hlls", {})
+
+    blocks: List[str] = [
+        '<p class="muted">Composition of <code>Vary</code> across the '
+        f"{_format_count(denom)} responses that carried one. A "
+        "<strong>recipe</strong> is the lowercased, deduped, sorted set of "
+        "field-names in a response's <code>Vary</code> &mdash; where "
+        "synthetic cache-key engineering shows up. <em>Responses</em> is "
+        "occurrence-weighted (one CDN origin can emit a recipe across "
+        "millions of responses); <em>Sites</em> is a HyperLogLog estimate of "
+        "distinct operators.</p>",
+        "<h3>Top Vary recipes</h3>",
+    ]
+    if vary.get("recipes_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    blocks.append(_render_recipe_table(recipes, denom))
+    blocks.append("<h3>Top Vary recipes (Accept-Encoding factored out)</h3>")
+    blocks.append(
+        '<p class="muted"><code>Accept-Encoding</code> appears in the large '
+        "majority of <code>Vary</code> headers and flattens the ranking. "
+        "Here it is removed from each recipe and the remainders re-merged "
+        "(site counts union exactly), so the meaningful axes surface.</p>"
+    )
+    factored = factor_out(recipes, ACCEPT_ENCODING, AE_ONLY_LABEL)
+    blocks.append(_render_recipe_table(factored, denom))
+    blocks.append(
+        "<h3>High-interest axes</h3>"
+        '<p class="muted">Prevalence of the cache-key / availability axes, as '
+        "a share of responses carrying <code>Vary</code>.</p>"
+    )
+    axes_entries = [(axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES]
+    blocks.append(
+        _render_marginal_table(axes_entries, marg_hlls, denom, show_registered=False)
+    )
+    blocks.append("<h3>Vary field-names (marginals)</h3>")
+    if vary.get("marginals_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    top_marginals = sorted(marg_occ.items(), key=lambda kv: kv[1], reverse=True)
+    blocks.append(
+        _render_marginal_table(top_marginals, marg_hlls, denom, show_registered=True)
+    )
+    blocks.append(
+        "<h3>Non-standard Vary tokens</h3>"
+        '<p class="muted">Tokens httplint\'s field registry does not '
+        "recognise (≈ not IANA-registered), approximating the synthetic "
+        "cache-key population. A <strong>lower bound</strong>: some schemes "
+        "are consumed at the edge and never appear in <code>Vary</code>, and "
+        "the classification is approximate (a real request header httplint "
+        "lacks a parser for also lands here).</p>"
+    )
+    nonstandard = sorted(
+        ((t, c) for t, c in marg_occ.items() if is_nonstandard_token(t)),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    blocks.append(
+        _render_marginal_table(nonstandard, marg_hlls, denom, show_registered=False)
+    )
+
+    return (
+        '<section id="vary">'
+        "<h2>Vary composition</h2>"
+        f"{''.join(blocks)}"
         "</section>"
     )
 
@@ -916,8 +1147,8 @@ def _render_unseen_subblock(title: str, body: str, notes: List[str]) -> str:
         return ""
     items = "".join(f"<li>{html.escape(n)}</li>" for n in notes)
     return (
-        '<details>'
-        f'<summary><h3>{html.escape(title)} ({len(notes)})</h3></summary>'
+        "<details>"
+        f"<summary><h3>{html.escape(title)} ({len(notes)})</h3></summary>"
         f'<p class="muted">{body}</p>'
         f'<ul class="missing-list">{items}</ul>'
         "</details>"
@@ -955,7 +1186,7 @@ def render_missing_section(
     ]
     return (
         '<section id="missing">'
-        '<h2>Unseen note types</h2>'
+        "<h2>Unseen note types</h2>"
         f'{"".join(blocks)}'
         "</section>"
     )

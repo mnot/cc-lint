@@ -1,21 +1,24 @@
-from typing import Any, Dict, Iterator, List, Optional, Set
 from collections import Counter
+from typing import Any, Dict, Iterator, List, Optional, Set
 
-from httplint.note import levels, Note
-from httplint.message import HttpResponseLinter
 from httplint.field.finder import UnknownHttpField
+from httplint.message import HttpResponseLinter
+from httplint.note import Note, levels
 
+from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.hll import (
     HLL_P_GLOBAL,
     HLL_P_PER_NOTE,
+    HLL_P_RECIPE,
     hll_add,
     make_registers,
 )
 from cc_lint.fingerprint import UNMATCHED, Fingerprinter, default_fingerprinter
-from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.ipasn import IpAsnTable
+from cc_lint.recipes import RecipeStats
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
+from cc_lint.vary import ASTERISK, recipe_key, vary_tokens
 
 
 def _level_to_severity(level: Any) -> Optional[str]:
@@ -36,6 +39,22 @@ def _level_to_severity(level: Any) -> Optional[str]:
     return None
 
 
+def iter_notes_depth_first(notes: Any) -> Iterator[Note]:
+    """Yield each note and all of its descendant subnotes, depth-first.
+
+    httplint attaches a class of findings — the strength/quality layer for
+    CSP, HSTS, Permissions-Policy, etc. — as children via ``Note.add_child()``,
+    which appends to ``note.subnotes`` rather than to ``linter.notes``. A child
+    is itself a full ``Note`` (own level/vars and possibly its own subnotes), so
+    we recurse rather than descend a single level.
+    """
+    for note in notes:
+        yield note
+        subnotes = getattr(note, "subnotes", None)
+        if subnotes:
+            yield from iter_notes_depth_first(subnotes)
+
+
 def _header_value_byte_len(value: Any) -> int:
     """Best-effort byte length of a header field value as it appeared on the wire.
 
@@ -48,6 +67,7 @@ def _header_value_byte_len(value: Any) -> int:
     if isinstance(value, str):
         return len(value.encode("utf-8", errors="replace"))
     return len(str(value))
+
 
 # Configuration for variable tracking
 # Map Note ID to list of variable names to track statistics for
@@ -75,34 +95,35 @@ VARS_TO_TRACK = {
     "FIELD_TOO_LARGE": ["field_name", "field_size_bucket"],
 }
 
-SAMPLES_TO_COLLECT = {
-    "BAD_SYNTAX": {
-        "field_name": [
-            "link",
-            "via",
-            "strict-transport-security",
-            "clear-site-data",
-            "content-md5",
-            "location",
-            "warning",
-            "content-range",
-        ]
-    },
-    "BAD_SYNTAX_DETAILED": {
-        "field_name": [
-            "link",
-            "via",
-            "strict-transport-security",
-            "clear-site-data",
-            "content-md5",
-            "location",
-            "warning",
-            "content-range",
-        ]
-    },
-    "VARY_COMPLEX": {"vary_count": ["6", "7", "8", "9", "10", "11", "12", "27"]},
-    "STRUCTURED_FIELD_PARSE_ERROR": {"field_error": ["*"]},
+# Every note whose breakdown is keyed on field_name gets per-field sample URLs
+# with the offending header value(s) captured, wildcarded over field names.
+# Derived from VARS_TO_TRACK so the two can't drift. A wildcard is safe for
+# field_name because the key space (header names) is bounded and the retained
+# set is further capped by VAR_SAMPLE_LIMIT (per value) and TOP_K_VAR_VALUES
+# (per var); only field_name samples capture the on-the-wire value, since
+# create_sample reads field_values from the matching header. High-cardinality
+# value dimensions (field_error, attribute, directive_conflicts) are left
+# unsampled to bound the cross-reducer shuffle. See issue #1.
+SAMPLES_TO_COLLECT: Dict[str, Dict[str, List[str]]] = {
+    note_id: {"field_name": ["*"]}
+    for note_id, tracked_vars in VARS_TO_TRACK.items()
+    if "field_name" in tracked_vars
 }
+# Bounded, hand-picked value sets stay explicit.
+SAMPLES_TO_COLLECT["VARY_COMPLEX"] = {
+    "vary_count": ["6", "7", "8", "9", "10", "11", "12", "27"]
+}
+
+# Cap each captured header value so a single pathological header can't bloat
+# the report or the shuffle. Applied per value, before repr().
+MAX_FIELD_VALUE_LEN = 300
+
+# Distinct sites retained per (var, value) sample bucket. The collection side
+# (StatsCollector._collect_samples) and the reducer-side merge
+# (cc_lint.emr.job._merge_var_samples) must use the same cap, so it lives here
+# -- the single source of truth -- and job.py imports it. It can't live in
+# job.py because job.py imports stats, not the reverse.
+VAR_SAMPLE_LIMIT = 15
 
 
 def _bucket_var(note: Note, source_var: str, bucketer: Any) -> Optional[str]:
@@ -120,10 +141,12 @@ def get_note_value(note: Note, var_name: str) -> Optional[Any]:
     if (
         var_name == "field_error"
         and "field_name" in note.vars
-        and "error" in note.vars
+        and "problem" in note.vars
     ):
-        # Strip context from the error message to group effectively
-        error_msg = str(note.vars["error"]).split("\n", maxsplit=1)[0]
+        # STRUCTURED_FIELD_PARSE_ERROR reports the parse failure in `problem`
+        # (with `context` holding the multi-line caret excerpt, which we drop).
+        # Keep the first line so values group cleanly.
+        error_msg = str(note.vars["problem"]).split("\n", maxsplit=1)[0]
         val = f"{note.vars['field_name']}: {error_msg}"
     elif var_name == "directive_conflicts":
         directive = note.vars.get("directive")
@@ -161,7 +184,13 @@ def create_sample(
 ) -> Optional[SampleType]:
     """
     Helper to create a sample dictionary from a note.
-    Captures header values if var_name/val_str are provided and match logic.
+
+    For the note-level samples pool (``var_name`` unset) the full note-vars
+    dump is carried, since :func:`cc_lint.report.sections._sample_li` renders
+    it. For per-(var, val) samples (``var_name``/``val_str`` set) only the
+    payload the report actually reads is carried -- the on-the-wire header
+    value(s) for ``field_name`` samples -- so the discarded note-attribute dump
+    doesn't ride the mapper->reducer shuffle for every retained sample.
     """
     sample_url = getattr(linter, "base_uri", None)
     if not sample_url:
@@ -170,27 +199,29 @@ def create_sample(
     if site is None:
         return None
 
-    note_vars = {}
-    filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
-    for key, val in vars(note).items():
-        if key not in filtered_keys:
-            note_vars[key] = str(val)
-    for key, val in note.vars.items():
-        if key not in filtered_keys:
-            note_vars[key] = str(val)
-
+    note_vars: Dict[str, str] = {}
     if var_name and val_str:
-        # Capture header values for context
         if var_name == "field_name":
+            # Capture the offending header value(s) for context.
             target_field_name = val_str.lower()
             values = []
             for h_name, h_val in linter.headers.text:
                 h_name_str = str(h_name)
                 if h_name_str.lower() == target_field_name:
                     h_val_str = str(h_val)
+                    if len(h_val_str) > MAX_FIELD_VALUE_LEN:
+                        h_val_str = h_val_str[:MAX_FIELD_VALUE_LEN] + "…[truncated]"
                     values.append(h_val_str)
             if values:
                 note_vars["field_values"] = repr(values)
+    else:
+        filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
+        for key, val in vars(note).items():
+            if key not in filtered_keys:
+                note_vars[key] = str(val)
+        for key, val in note.vars.items():
+            if key not in filtered_keys:
+                note_vars[key] = str(val)
 
     return {"url": sample_url, "vars": note_vars, "site": site}
 
@@ -270,6 +301,16 @@ class StatsCollector:
         # population-level summary of what httplint thought of each
         # crawled response, not a claim about specific sites.
         self.severity_counts: Counter[str] = Counter()
+        # Vary composition (issue #3). Recipes are the full sorted token-set
+        # per response (the primary artifact); marginals are the per-field
+        # rollup. Both carry occurrence + per-site HLL via RecipeStats.
+        # Recipes are high-cardinality (up to TOP_K_RECIPES per mapper), so
+        # their per-site HLLs use the coarse HLL_P_RECIPE precision to bound
+        # shuffle; marginals are bounded (a few hundred field-names) and
+        # carry the headline axes, so they keep the default HLL_P_PER_NOTE.
+        self.responses_with_vary = 0
+        self.vary_recipes = RecipeStats(HLL_P_RECIPE)
+        self.vary_marginals = RecipeStats(HLL_P_PER_NOTE)
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -294,7 +335,7 @@ class StatsCollector:
         # it up into severity_counts after the note loop.
         max_severity: Optional[str] = None
         severity_order = {"bad": 4, "warn": 3, "info": 2, "good": 1}
-        for note in linter.notes:
+        for note in iter_notes_depth_first(linter.notes):
             level = getattr(note, "level", None)
             severity = _level_to_severity(level)
             if severity is None:
@@ -308,6 +349,7 @@ class StatsCollector:
 
         self.severity_counts[max_severity or "clean"] += 1
         self._process_headers(linter, site, layers)
+        self._process_vary(linter, site)
 
     def _fingerprint(
         self, linter: HttpResponseLinter
@@ -322,6 +364,24 @@ class StatsCollector:
             if ip_address:
                 asn = self.ipasn.lookup(str(ip_address))
         return self.fingerprinter.match(header_map, asn), asn
+
+    def _process_vary(self, linter: HttpResponseLinter, site: Optional[str]) -> None:
+        """Tabulate Vary composition for responses carrying a Vary header.
+
+        Records the full token-set as a recipe and each field-name as a
+        marginal, both keyed for per-occurrence and per-site rollups. The
+        wildcard token stays in the recipe (so ``*`` shows up as its own
+        recipe) but is excluded from the per-field marginals.
+        """
+        tokens = vary_tokens(linter)
+        if not tokens:
+            return
+        self.responses_with_vary += 1
+        self.vary_recipes.add(recipe_key(tokens), site)
+        for token in tokens:
+            if token == ASTERISK:
+                continue
+            self.vary_marginals.add(token, site)
 
     def _process_note(
         self,
@@ -399,7 +459,9 @@ class StatsCollector:
             return True
         return site in self.sample_sites
 
-    def _collect_samples(self, note: Note, linter: HttpResponseLinter, note_id: str) -> None:
+    def _collect_samples(
+        self, note: Note, linter: HttpResponseLinter, note_id: str
+    ) -> None:
         # Collect detailed samples, deduped by site so the cap maps to N
         # distinct sites rather than N URLs from possibly the same site.
         for var_name, val_str, sample in iter_collected_samples(note, linter):
@@ -414,12 +476,14 @@ class StatsCollector:
                 self.note_data[note_id]["var_samples"][var_name][val_str] = []
 
             current_samples = self.note_data[note_id]["var_samples"][var_name][val_str]
-            if len(current_samples) >= 15:
+            if len(current_samples) >= VAR_SAMPLE_LIMIT:
                 continue
             if sample_site not in {s.get("site") for s in current_samples}:
                 current_samples.append(sample)
 
-    def _collect_note_sample(self, note: Note, linter: HttpResponseLinter, note_id: str) -> None:
+    def _collect_note_sample(
+        self, note: Note, linter: HttpResponseLinter, note_id: str
+    ) -> None:
         if len(self.note_data[note_id]["samples"]) >= 5:
             return
         sample = create_sample(note, linter)
@@ -467,7 +531,7 @@ class StatsCollector:
                 self.unprocessed_counts[name] += 1
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result: Dict[str, Any] = {
             "total_responses": self.total_responses,
             "notes": self.note_data,
             "field_counts": dict(self.field_counts),
@@ -482,3 +546,10 @@ class StatsCollector:
             },
             "asn_counts": dict(self.asn_counts),
         }
+        if self.responses_with_vary:
+            result["vary"] = {
+                "responses_with_vary": self.responses_with_vary,
+                "recipes": self.vary_recipes.to_dict(),
+                "marginals": self.vary_marginals.to_dict(),
+            }
+        return result

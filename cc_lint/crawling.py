@@ -12,7 +12,7 @@ import shutil
 from typing import Any, Iterator, Optional
 
 import requests
-from warcio.archiveiterator import ArchiveIterator
+from warcio.archiveiterator import ArchiveIterator  # type: ignore[import-untyped]
 
 from cc_lint.cc_paths import warc_path_to_wat
 
