@@ -73,6 +73,16 @@ def _header_value_byte_len(value: Any) -> int:
     return len(str(value))
 
 
+# Per-header-line framing bytes counted into the byte-economics totals
+# (issue #10): the ``: `` between name and value plus the trailing CRLF. We
+# report *uncompressed* header bytes -- ``len(name) + len(value) + framing``
+# per occurrence -- which overstates on-the-wire cost (HPACK/QPACK compress
+# repeated headers heavily) but measures origin/pre-compression intent. The
+# status line and the block-terminating CRLF are not per-header, so they are
+# excluded.
+_HEADER_FRAMING_BYTES = 4
+
+
 # Configuration for variable tracking
 # Map Note ID to list of variable names to track statistics for
 VARS_TO_TRACK = {
@@ -417,6 +427,22 @@ class StatsCollector:
         # maximum so the report's histogram counts each site once at the
         # largest CSP it ever served. 0 means "site seen, no CSP."
         self.csp_max_by_site: Dict[str, int] = {}
+        # Header byte economics (issue #10). All three exclude crawler-injected
+        # x-crawler-* headers (not part of the upstream response) so the byte
+        # totals reflect origin intent.
+        #   field_bytes:     header name (lower) -> total uncompressed bytes,
+        #                    the head-of-distribution dict that drives the
+        #                    top-by-bytes ranking and the report-time category
+        #                    split. Long tail trimmed like field_counts.
+        #   header_block_hist: byte bucket label -> response count, the
+        #                    per-response total-header-block size distribution
+        #                    (bounded by BYTE_BUCKETS, so it merges by summing).
+        #   total_header_bytes: exact corpus-wide sum, for the mean-bytes
+        #                    headline (field_bytes is trimmed, so it can't give
+        #                    an exact total).
+        self.field_bytes: Counter[str] = Counter()
+        self.header_block_hist: Counter[str] = Counter()
+        self.total_header_bytes = 0
         # Per-response health rollup. For each response we bucket by the
         # most severe note that fired (bad > warn > info > good > clean),
         # so the report can show "X% of responses produced no findings".
@@ -724,8 +750,10 @@ class StatsCollector:
     ) -> None:
         # Count fields (case-insensitive). ``header_items`` is the (lowercased
         # name, raw value) list already materialized in process_linter.
-        # Capture CSP byte size for the per-site histogram while we iterate.
+        # Capture CSP byte size for the per-site histogram while we iterate, and
+        # tally header byte economics (issue #10) over the same walk.
         csp_bytes = 0
+        response_header_bytes = 0
         for name_lower, value in header_items:
             self.field_counts[name_lower] += 1
             if layers:
@@ -734,6 +762,19 @@ class StatsCollector:
                     per_layer[layer] += 1
             if name_lower == "content-security-policy":
                 csp_bytes += _header_value_byte_len(value)
+            # Byte economics exclude crawler-injected headers; they are CC's,
+            # not the origin's, so counting them would inflate the cost figures.
+            if not name_lower.startswith("x-crawler-"):
+                line_bytes = (
+                    len(name_lower)
+                    + _header_value_byte_len(value)
+                    + _HEADER_FRAMING_BYTES
+                )
+                self.field_bytes[name_lower] += line_bytes
+                response_header_bytes += line_bytes
+
+        self.total_header_bytes += response_header_bytes
+        self.header_block_hist[byte_bucket(response_header_bytes)] += 1
 
         if site:
             prev = self.csp_max_by_site.get(site, 0)
@@ -759,6 +800,9 @@ class StatsCollector:
             "unprocessed_counts": dict(self.unprocessed_counts),
             "sites_hll": self.sites_hll,
             "csp_max_by_site": dict(self.csp_max_by_site),
+            "field_bytes": dict(self.field_bytes),
+            "header_block_hist": dict(self.header_block_hist),
+            "total_header_bytes": self.total_header_bytes,
             "severity_counts": dict(self.severity_counts),
             "layer_counts": dict(self.layer_counts),
             "field_counts_by_layer": {

@@ -314,6 +314,37 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Content-Security-Policy size by site", md)
         self.assertIn("| 1-99 B |", md)
 
+    def test_header_bytes_section_renders(self) -> None:
+        data = dict(SAMPLE_STATS)
+        data["field_bytes"] = {
+            "set-cookie": 4_000_000,
+            "content-security-policy": 2_500_000,
+            "content-type": 40_000,
+            "pragma": 18_000,
+            "cf-ray": 1_200_000,
+        }
+        data["header_block_hist"] = {"<256 B": 120, "256-1023 B": 540, "1-4 KB": 280}
+        data["total_header_bytes"] = 9_200_000
+        html, md = self._render_both(data)
+        self.assertIn("Header byte economics", html)
+        self.assertIn("Header byte economics", md)
+        # The category table is byte-valued, so it must use byte-size
+        # formatting in BOTH renderers (regression: HTML used _format_count,
+        # printing a raw 2,500,000 under a "Bytes" column). 2.4 MB == 2.5e6 B.
+        self.assertIn("2.4 MB", html)
+        self.assertIn("2.4 MB", md)
+        # pragma is deprecated, cf-ray is proprietary -> both categories appear.
+        self.assertIn("Deprecated", html)
+        self.assertIn("Proprietary", html)
+        # Mean headline renders before the first subsection in both.
+        self.assertIn("Mean header block", html)
+        self.assertIn("Mean header block", md)
+
+    def test_no_header_bytes_section_absent(self) -> None:
+        html, md = self._render_both(dict(SAMPLE_STATS))
+        self.assertNotIn("Header byte economics", html)
+        self.assertNotIn("Header byte economics", md)
+
     def test_value_histograms_render(self) -> None:
         data = dict(SAMPLE_STATS)
         data["value_histograms"] = {

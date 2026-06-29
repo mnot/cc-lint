@@ -20,6 +20,7 @@ from cc_lint.report.sections import (
     render_cooccur_section,
     render_csp_section,
     render_field_counts_section,
+    render_header_bytes_section,
     render_header_stats,
     render_health_summary,
     render_infrastructure_section,
@@ -103,6 +104,13 @@ def _build_html(data: Dict[str, Any]) -> str:
         ),
         render_field_counts_section(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
+        ),
+        render_header_bytes_section(
+            data.get("field_bytes") or {},
+            data.get("header_block_hist") or {},
+            int(data.get("total_header_bytes", 0)),
+            total_responses,
+            bool(data.get("truncated_field_bytes")),
         ),
         render_infrastructure_section(
             layer_counts,
