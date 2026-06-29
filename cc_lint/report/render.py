@@ -27,6 +27,7 @@ from cc_lint.report.sections import (
     render_missing_section,
     render_notes_section,
     render_run_context,
+    render_transition_section,
     render_unprocessed_section,
     render_value_histograms_section,
     render_vary_section,
@@ -70,6 +71,7 @@ def _build_html(data: Dict[str, Any]) -> str:
     vary = data.get("vary") or {}
     cache_control = data.get("cache_control") or {}
     cooccur = data.get("cooccur") or {}
+    transition = data.get("transition") or {}
 
     layer_counts: Dict[str, int] = data.get("layer_counts") or {}
     field_counts_by_layer: Dict[str, Dict[str, int]] = (
@@ -131,6 +133,7 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_vary_section(vary),
         render_cache_control_section(cache_control),
         render_cooccur_section(cooccur, layer_roles),
+        render_transition_section(transition),
         render_unprocessed_section(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         ),

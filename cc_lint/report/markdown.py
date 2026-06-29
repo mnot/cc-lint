@@ -45,6 +45,7 @@ from cc_lint.report.severity import (
     possible_note_ids,
 )
 from cc_lint.report.styles import METHODOLOGY_NOTE
+from cc_lint.transition import transition_rows
 from cc_lint.vary import (
     ACCEPT_ENCODING,
     AE_ONLY_LABEL,
@@ -1194,6 +1195,90 @@ def _render_cooccur_section(cooccur: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _transition_pct(count: int, denom: int) -> str:
+    return f"{count / denom * 100:.2f}%" if denom else "—"
+
+
+def _transition_sites(count: Optional[int]) -> str:
+    return f"~{_fmt_count(count)}" if count else "—"
+
+
+def _transition_pair_label(row: Dict[str, Any]) -> str:
+    legacy = _md_escape_pipe(str(row["legacy_label"]))
+    modern = _md_escape_pipe(str(row["modern_label"]))
+    return f"**{legacy}** → {modern}"
+
+
+def _render_transition_section(transition: Dict[str, Any]) -> List[str]:
+    """Render the legacy/modern transition (transition tax) section (issue #11)."""
+    if not transition:
+        return []
+    denom = int(transition.get("responses", 0))
+    if denom <= 0:
+        return []
+    rows = transition_rows(transition)
+    lines = [
+        "## Legacy → modern transitions",
+        "",
+        "For a curated set of deprecated/replacement header pairs, how far the "
+        "corpus has moved from the legacy header to its modern equivalent. Each "
+        "response is binned per pair: *both* sides present (a site mid-migration, "
+        "paying the dual-emit cost), *modern only*, *legacy only*, or neither. "
+        "**Modern share** is `modern / (modern + legacy)` over the legacy+modern "
+        "presence signal — a *both* response counts on each side, and responses "
+        "carrying neither are excluded so they can't drown the signal. Detection "
+        "reads inside `CSP` and `Cache-Control` where the modern side is a "
+        f"directive, not a header. Shares are of all {_fmt_count(denom)} "
+        "analysed responses.",
+        "",
+        "| Pair (legacy → modern) | Both | Modern only | Legacy only | Modern share | Sites both |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        pair_label = _transition_pair_label(row)
+        if row["legacy_only_pair"]:
+            share = "n/a (no replacement)"
+        elif row["ratio"] is None:
+            share = "—"
+        else:
+            share = f"{row['ratio'] * 100:.1f}%"
+        lines.append(
+            f"| {pair_label} | "
+            f"{_fmt_count(row['both'])} ({_transition_pct(row['both'], denom)}) | "
+            f"{_fmt_count(row['modern_only'])} | "
+            f"{_fmt_count(row['legacy_only'])} | "
+            f"{share} | {_transition_sites(row['both_sites'])} |"
+        )
+    lines.append("")
+    lines.append("### Per-site view")
+    lines.append("")
+    lines.append(
+        "Distinct operators emitting each side (the meaningful unit for "
+        "adoption), with the modern share computed over sites."
+    )
+    lines.append("")
+    lines.append(
+        "| Pair (legacy → modern) | Legacy sites | Modern sites | Modern share (sites) |"
+    )
+    lines.append("| --- | --- | --- | --- |")
+    for row in rows:
+        pair_label = _transition_pair_label(row)
+        if row["legacy_only_pair"]:
+            site_share = "n/a (no replacement)"
+        elif row["site_ratio"] is None:
+            site_share = "—"
+        else:
+            site_share = f"{row['site_ratio'] * 100:.1f}%"
+        lines.append(
+            f"| {pair_label} | "
+            f"{_transition_sites(row['legacy_sites'])} | "
+            f"{_transition_sites(row['modern_sites'])} | "
+            f"{site_share} |"
+        )
+    lines.append("")
+    return lines
+
+
 def _render_unprocessed(
     unprocessed_counts: Dict[str, int], truncated: bool
 ) -> List[str]:
@@ -1323,6 +1408,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(_render_vary_section(data.get("vary") or {}))
     lines.extend(_render_cache_control_section(data.get("cache_control") or {}))
     lines.extend(_render_cooccur_section(data.get("cooccur") or {}))
+    lines.extend(_render_transition_section(data.get("transition") or {}))
     lines.extend(
         _render_unprocessed(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))

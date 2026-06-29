@@ -146,6 +146,15 @@ class TestMergeStatsDict(unittest.TestCase):
                     "pairs": {"occ": {}},
                     "by_layer": {"x-frame-options": {"cloudflare": 10}},
                 },
+                "transition": {
+                    "responses": 50,
+                    "pairs": {
+                        "frame_options": {
+                            "occ": {"both": 5, "legacy_only": 10, "neither": 35},
+                            "hlls": {},
+                        }
+                    },
+                },
             },
         )
         merge_stats_dict(
@@ -190,6 +199,15 @@ class TestMergeStatsDict(unittest.TestCase):
                     "marginals": {"occ": {"x-frame-options": 10}},
                     "pairs": {"occ": {}},
                     "by_layer": {"x-frame-options": {"cloudflare": 5, "nginx": 5}},
+                },
+                "transition": {
+                    "responses": 30,
+                    "pairs": {
+                        "frame_options": {
+                            "occ": {"both": 3, "modern_only": 7, "neither": 20},
+                            "hlls": {},
+                        }
+                    },
                 },
             },
         )
@@ -262,6 +280,13 @@ class TestMergeStatsDict(unittest.TestCase):
         self.assertEqual(
             target["cooccur"]["by_layer"]["x-frame-options"],
             {"cloudflare": 15, "nginx": 5},
+        )
+        # transition block (issue #11) survives: responses sum and per-pair,
+        # per-category occurrence counts merge across both folds.
+        self.assertEqual(target["transition"]["responses"], 80)
+        self.assertEqual(
+            target["transition"]["pairs"]["frame_options"]["occ"],
+            {"both": 8, "legacy_only": 10, "modern_only": 7, "neither": 55},
         )
 
 

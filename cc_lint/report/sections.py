@@ -36,6 +36,7 @@ from cc_lint.hll import hll_estimate
 from cc_lint.recipes import recipe_tokens
 from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
+from cc_lint.transition import transition_rows
 from cc_lint.vary import (
     ACCEPT_ENCODING,
     AE_ONLY_LABEL,
@@ -1723,6 +1724,128 @@ def render_cooccur_section(cooccur: Dict[str, Any], roles: Dict[str, str]) -> st
         "<h2>Header co-occurrence</h2>"
         f"{''.join(blocks)}"
         "</section>"
+    )
+
+
+# ---- legacy/modern transition (issue #11) ----------------------------------
+
+
+def _transition_ratio_cell(row: Dict[str, Any]) -> str:
+    """The transition-ratio cell: a percentage, or a legacy-only marker."""
+    if row["legacy_only_pair"]:
+        return '<span class="muted">n/a (no replacement)</span>'
+    ratio = row["ratio"]
+    if ratio is None:
+        return "—"
+    return f"{ratio * 100:.1f}%"
+
+
+def _transition_site_count(count: Optional[int]) -> str:
+    return f"~{_format_count(count)}" if count else "—"
+
+
+def _render_transition_table(rows: List[Dict[str, Any]], denom: int) -> str:
+    head = [
+        "Pair (legacy → modern)",
+        "Both",
+        "Modern only",
+        "Legacy only",
+        "Modern share",
+        "Sites both",
+    ]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    body_rows: List[str] = []
+    for row in rows:
+        pair_label = (
+            f"<strong>{html.escape(str(row['legacy_label']))}</strong> &rarr; "
+            f"{html.escape(str(row['modern_label']))}"
+        )
+        cells = [
+            pair_label,
+            f"{_format_count(row['both'])} ({_cooccur_pct(row['both'], denom)})",
+            _format_count(row["modern_only"]),
+            _format_count(row["legacy_only"]),
+            _transition_ratio_cell(row),
+            _transition_site_count(row["both_sites"]),
+        ]
+        body_rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    return (
+        '<table class="data-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table>"
+    )
+
+
+def render_transition_section(transition: Dict[str, Any]) -> str:
+    """Render the legacy/modern dual-emit (transition tax) section (issue #11)."""
+    if not transition:
+        return ""
+    denom = int(transition.get("responses", 0))
+    if denom <= 0:
+        return ""
+    rows = transition_rows(transition)
+    blocks: List[str] = [
+        '<p class="muted">For a curated set of deprecated/replacement header '
+        "pairs, how far the corpus has moved from the legacy header to its "
+        "modern equivalent. Each response is binned per pair: <strong>both</strong> "
+        "sides present (a site mid-migration, paying the dual-emit cost), "
+        "<strong>modern only</strong>, <strong>legacy only</strong>, or neither. "
+        "<strong>Modern share</strong> is "
+        "<code>modern / (modern + legacy)</code> over the legacy+modern presence "
+        "signal &mdash; a <strong>both</strong> response counts on each side, and "
+        "responses carrying neither are excluded so they can't "
+        "drown the signal. Detection reads inside <code>CSP</code> and "
+        "<code>Cache-Control</code> where the modern side is a directive, not a "
+        f"header. Shares are of all {_format_count(denom)} analysed responses.</p>",
+        _render_transition_table(rows, denom),
+    ]
+    blocks.append(
+        '<p class="muted">Per-site view (the meaningful unit for adoption): '
+        "distinct operators emitting each side, with the modern share computed "
+        "over sites.</p>"
+    )
+    blocks.append(_render_transition_sites_table(rows))
+    return (
+        '<section id="transition">'
+        "<h2>Legacy → modern transitions</h2>"
+        f"{''.join(blocks)}"
+        "</section>"
+    )
+
+
+def _render_transition_sites_table(rows: List[Dict[str, Any]]) -> str:
+    head = [
+        "Pair (legacy → modern)",
+        "Legacy sites",
+        "Modern sites",
+        "Modern share (sites)",
+    ]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    body_rows: List[str] = []
+    for row in rows:
+        pair_label = (
+            f"<strong>{html.escape(str(row['legacy_label']))}</strong> &rarr; "
+            f"{html.escape(str(row['modern_label']))}"
+        )
+        if row["legacy_only_pair"]:
+            site_ratio_cell = '<span class="muted">n/a (no replacement)</span>'
+        elif row["site_ratio"] is None:
+            site_ratio_cell = "—"
+        else:
+            site_ratio_cell = f"{row['site_ratio'] * 100:.1f}%"
+        cells = [
+            pair_label,
+            _transition_site_count(row["legacy_sites"]),
+            _transition_site_count(row["modern_sites"]),
+            site_ratio_cell,
+        ]
+        body_rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    return (
+        '<table class="data-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table>"
     )
 
 
