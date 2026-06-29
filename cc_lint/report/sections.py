@@ -65,6 +65,39 @@ def _sample_li(sample: Dict[str, Any]) -> str:
     )
 
 
+def _field_sample_li(sample: Dict[str, Any]) -> str:
+    """Render a per-field sample, surfacing the captured malformed value.
+
+    Unlike :func:`_sample_li`, this shows only the header value(s) seen on the
+    wire (``field_values``) rather than the full note-vars dump, so the reader
+    can characterise a field's malformed population at a glance.
+    """
+    url = sample.get("url", "")
+    if not url:
+        return ""
+    raw_values = sample.get("vars", {}).get("field_values")
+    value_html = ""
+    if raw_values:
+        value_html = f'<code class="field-val">{html.escape(str(raw_values))}</code>'
+    return (
+        f'<li><a href="{html.escape(_redbot_link(url))}" target="_blank" rel="noopener">'
+        f"{html.escape(url)}</a>{value_html}</li>"
+    )
+
+
+def _field_samples_details(samples: List[Dict[str, Any]]) -> str:
+    """Collapsible list of per-field sample URLs + captured values, or ""."""
+    items = "".join(_field_sample_li(s) for s in samples)
+    if not items:
+        return ""
+    return (
+        '<details class="field-samples">'
+        f"<summary>Samples ({_format_count(len(samples))})</summary>"
+        f'<ul class="samples">{items}</ul>'
+        "</details>"
+    )
+
+
 def count_total_notes(notes: Dict[str, Any]) -> int:
     return sum(int(data.get("count", 0)) for data in notes.values())
 
@@ -227,7 +260,9 @@ def _render_var_block(
     counts: Dict[str, int],
     field_counts: Dict[str, int],
     largest_by_value: Optional[Dict[str, int]] = None,
+    value_samples: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> str:
+    value_samples = value_samples or {}
     is_field_name = var_name == "field_name"
     bucket_seq = bucket_order(var_name)
     if bucket_seq is not None:
@@ -266,7 +301,11 @@ def _render_var_block(
 
     rows: List[str] = []
     for val, val_count in sorted_vals[:25]:
-        cells = [html.escape(val), _format_count(val_count)]
+        value_cell = html.escape(val)
+        samples = value_samples.get(val)
+        if samples:
+            value_cell += _field_samples_details(samples)
+        cells = [value_cell, _format_count(val_count)]
         if is_field_name:
             total = field_counts.get(val.lower(), 0)
             if total:
@@ -305,6 +344,10 @@ def _render_variable_stats(
     numeric_maxes: Dict[str, Dict[str, int]] = note_data.get("numeric_maxes") or {}
     # Currently the only configured max is field_size, keyed by field_name.
     field_size_max = numeric_maxes.get("field_size") or {}
+    var_samples: Dict[str, Dict[str, List[Dict[str, Any]]]] = (
+        note_data.get("var_samples") or {}
+    )
+    field_samples = var_samples.get("field_name") or {}
     blocks: List[str] = []
     for var_name, counts in var_stats.items():
         if truncated_vars.get(var_name):
@@ -318,8 +361,11 @@ def _render_variable_stats(
             blocks.append(_render_field_error_block(counts))
         else:
             largest_by_value = field_size_max if var_name == "field_name" else None
+            value_samples = field_samples if var_name == "field_name" else None
             blocks.append(
-                _render_var_block(var_name, counts, field_counts, largest_by_value)
+                _render_var_block(
+                    var_name, counts, field_counts, largest_by_value, value_samples
+                )
             )
     return f'<div class="var-stats">{"".join(blocks)}</div>'
 

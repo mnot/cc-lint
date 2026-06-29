@@ -8,7 +8,6 @@ from typing import Any, Dict
 from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
 from cc_lint.report import render_report
 
-
 SAMPLE_STATS = {
     "total_responses": 1234,
     "field_counts": {"content-type": 1234, "x-custom": 7, "server": 1100},
@@ -30,7 +29,9 @@ SAMPLE_STATS = {
         },
         "CC_DUP": {
             "count": 4,
-            "samples": [{"url": "http://c.example/", "vars": {"directive": "no-cache"}}],
+            "samples": [
+                {"url": "http://c.example/", "vars": {"directive": "no-cache"}}
+            ],
             "vars": {"directive": {"no-cache": 4}},
         },
     },
@@ -104,7 +105,47 @@ class TestRenderer(unittest.TestCase):
         # The warning appears at least once per affected section (headers,
         # unprocessed, and per-note vars).
         self.assertGreaterEqual(html.count("long tail"), 3)
-        self.assertIn("class=\"muted truncated\"", html)
+        self.assertIn('class="muted truncated"', html)
+
+    def test_per_field_samples(self) -> None:
+        # A field_name-keyed note carries per-field var_samples; each field row
+        # in the field_name breakdown table should attach that field's sample
+        # URLs and captured header values.
+        data = {
+            "total_responses": 100,
+            "field_counts": {"cross-origin-embedder-policy": 50, "via": 50},
+            "unprocessed_counts": {},
+            "notes": {
+                "STRUCTURED_FIELD_PARSE_ERROR": {
+                    "count": 12,
+                    "samples": [],
+                    "vars": {
+                        "field_name": {
+                            "cross-origin-embedder-policy": 8,
+                            "via": 4,
+                        },
+                    },
+                    "var_samples": {
+                        "field_name": {
+                            "cross-origin-embedder-policy": [
+                                {
+                                    "url": "http://coep.example/",
+                                    "vars": {"field_values": "['require-corp; foo']"},
+                                }
+                            ],
+                            "via": [{"url": "http://via.example/", "vars": {}}],
+                        }
+                    },
+                }
+            },
+        }
+        html = self._render(data)
+        self.assertIn("field-samples", html)
+        # COEP sample URL and its captured malformed value both surface.
+        self.assertIn("http://coep.example/", html)
+        self.assertIn("require-corp; foo", html)
+        # The via sample (no captured value) still renders its URL.
+        self.assertIn("http://via.example/", html)
 
     def test_sites_hll_surfaces(self) -> None:
         global_hll = make_registers(HLL_P_GLOBAL)
@@ -248,7 +289,9 @@ class TestRenderer(unittest.TestCase):
             "notes": {
                 "BAD_SYNTAX": {
                     "count": 1,
-                    "samples": [{"url": "http://x/?<script>alert(1)</script>", "vars": {}}],
+                    "samples": [
+                        {"url": "http://x/?<script>alert(1)</script>", "vars": {}}
+                    ],
                     "vars": {},
                 }
             },

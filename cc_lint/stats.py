@@ -73,34 +73,28 @@ VARS_TO_TRACK = {
     "FIELD_TOO_LARGE": ["field_name", "field_size_bucket"],
 }
 
-SAMPLES_TO_COLLECT = {
-    "BAD_SYNTAX": {
-        "field_name": [
-            "link",
-            "via",
-            "strict-transport-security",
-            "clear-site-data",
-            "content-md5",
-            "location",
-            "warning",
-            "content-range",
-        ]
-    },
-    "BAD_SYNTAX_DETAILED": {
-        "field_name": [
-            "link",
-            "via",
-            "strict-transport-security",
-            "clear-site-data",
-            "content-md5",
-            "location",
-            "warning",
-            "content-range",
-        ]
-    },
-    "VARY_COMPLEX": {"vary_count": ["6", "7", "8", "9", "10", "11", "12", "27"]},
-    "STRUCTURED_FIELD_PARSE_ERROR": {"field_error": ["*"]},
+# Every note whose breakdown is keyed on field_name gets per-field sample URLs
+# with the offending header value(s) captured, wildcarded over field names.
+# Derived from VARS_TO_TRACK so the two can't drift. A wildcard is safe for
+# field_name because the key space (header names) is bounded and the retained
+# set is further capped by VAR_SAMPLE_LIMIT (per value) and TOP_K_VAR_VALUES
+# (per var); only field_name samples capture the on-the-wire value, since
+# create_sample reads field_values from the matching header. High-cardinality
+# value dimensions (field_error, attribute, directive_conflicts) are left
+# unsampled to bound the cross-reducer shuffle. See issue #1.
+SAMPLES_TO_COLLECT: Dict[str, Dict[str, List[str]]] = {
+    note_id: {"field_name": ["*"]}
+    for note_id, tracked_vars in VARS_TO_TRACK.items()
+    if "field_name" in tracked_vars
 }
+# Bounded, hand-picked value sets stay explicit.
+SAMPLES_TO_COLLECT["VARY_COMPLEX"] = {
+    "vary_count": ["6", "7", "8", "9", "10", "11", "12", "27"]
+}
+
+# Cap each captured header value so a single pathological header can't bloat
+# the report or the shuffle. Applied per value, before repr().
+MAX_FIELD_VALUE_LEN = 300
 
 
 def _bucket_var(note: Note, source_var: str, bucketer: Any) -> Optional[str]:
@@ -186,6 +180,8 @@ def create_sample(
                 h_name_str = str(h_name)
                 if h_name_str.lower() == target_field_name:
                     h_val_str = str(h_val)
+                    if len(h_val_str) > MAX_FIELD_VALUE_LEN:
+                        h_val_str = h_val_str[:MAX_FIELD_VALUE_LEN] + "…[truncated]"
                     values.append(h_val_str)
             if values:
                 note_vars["field_values"] = repr(values)
