@@ -118,10 +118,12 @@ def get_note_value(note: Note, var_name: str) -> Optional[Any]:
     if (
         var_name == "field_error"
         and "field_name" in note.vars
-        and "error" in note.vars
+        and "problem" in note.vars
     ):
-        # Strip context from the error message to group effectively
-        error_msg = str(note.vars["error"]).split("\n", maxsplit=1)[0]
+        # STRUCTURED_FIELD_PARSE_ERROR reports the parse failure in `problem`
+        # (with `context` holding the multi-line caret excerpt, which we drop).
+        # Keep the first line so values group cleanly.
+        error_msg = str(note.vars["problem"]).split("\n", maxsplit=1)[0]
         val = f"{note.vars['field_name']}: {error_msg}"
     elif var_name == "directive_conflicts":
         directive = note.vars.get("directive")
