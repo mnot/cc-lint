@@ -1107,8 +1107,9 @@ def _render_transition_section(transition: Dict[str, Any]) -> List[str]:
         "corpus has moved from the legacy header to its modern equivalent. Each "
         "response is binned per pair: *both* sides present (a site mid-migration, "
         "paying the dual-emit cost), *modern only*, *legacy only*, or neither. "
-        "**Modern share** is `modern / (modern + legacy)` over responses carrying "
-        "either side (neither excluded so it can't drown the signal). Detection "
+        "**Modern share** is `modern / (modern + legacy)` over the legacy+modern "
+        "presence signal — a *both* response counts on each side, and responses "
+        "carrying neither are excluded so they can't drown the signal. Detection "
         "reads inside `CSP` and `Cache-Control` where the modern side is a "
         f"directive, not a header. Shares are of all {_fmt_count(denom)} "
         "analysed responses.",

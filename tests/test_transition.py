@@ -155,6 +155,15 @@ class TestStatsAndMerge(unittest.TestCase):
         self.assertEqual(out["frame_options"]["occ"], {"both": 2, "legacy_only": 1})
         self.assertIn("both", out["frame_options"]["hlls"])
 
+    def test_neither_bucket_has_no_hll(self) -> None:
+        # The report never reads the neither site set, so no HLL is built for
+        # it (saving an unused register array per pair from the shuffle).
+        stats = TransitionStats(HLL_P_PER_NOTE)
+        stats.add("frame_options", "neither", "a.example")
+        out = stats.to_dict()
+        self.assertEqual(out["frame_options"]["occ"], {"neither": 1})
+        self.assertNotIn("neither", out["frame_options"]["hlls"])
+
     def test_merge_sums_occ_and_unions_hlls(self) -> None:
         reg_a = make_registers(HLL_P_PER_NOTE)
         reg_b = make_registers(HLL_P_PER_NOTE)

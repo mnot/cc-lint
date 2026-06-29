@@ -1625,8 +1625,9 @@ def render_transition_section(transition: Dict[str, Any]) -> str:
         "sides present (a site mid-migration, paying the dual-emit cost), "
         "<strong>modern only</strong>, <strong>legacy only</strong>, or neither. "
         "<strong>Modern share</strong> is "
-        "<code>modern / (modern + legacy)</code> over responses carrying either "
-        "side &mdash; responses carrying neither are excluded so they can't "
+        "<code>modern / (modern + legacy)</code> over the legacy+modern presence "
+        "signal &mdash; a <strong>both</strong> response counts on each side, and "
+        "responses carrying neither are excluded so they can't "
         "drown the signal. Detection reads inside <code>CSP</code> and "
         "<code>Cache-Control</code> where the modern side is a directive, not a "
         f"header. Shares are of all {_format_count(denom)} analysed responses.</p>",

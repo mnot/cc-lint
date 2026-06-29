@@ -11,9 +11,14 @@ response into exactly one of four buckets per pair:
 
 The thesis under test is *ossification / the transition tax*: the cost of
 never retiring anything. The per-pair headline is the **transition ratio**
-``modern_present / (modern_present + legacy_present)`` -- how far the corpus
-has moved from the legacy header to its replacement. ``neither`` is reported
-for context but excluded from the ratio's denominator, so the population of
+``modern_present / (modern_present + legacy_present)``, where
+``modern_present = both + modern_only`` and ``legacy_present = both +
+legacy_only`` -- how far the corpus has moved from the legacy header to its
+replacement. The denominator is the *presence signal*, not a response count:
+a ``both`` response (mid-migration) counts on each side, so it is weighted
+into both terms rather than once. This is deliberate -- an all-``both`` corpus
+should read as 0.5 (everyone still emits legacy), not 100% migrated. ``neither``
+is reported for context but excluded from the denominator, so the population of
 responses that never carried either side can't drown the signal (one of the
 issue's stated concerns).
 
@@ -67,6 +72,12 @@ from cc_lint.hll import (
 # The four mutually-exclusive buckets a response falls into for a given pair.
 # Order is the canonical display order (most-migrated to least-relevant).
 CATEGORIES: Tuple[str, ...] = ("both", "modern_only", "legacy_only", "neither")
+
+# Buckets whose per-site HLL the report actually consumes. ``transition_rows``
+# only unions ``both``/``modern_only``/``legacy_only`` for the per-site view;
+# the ``neither`` site set is never read, so we don't build or shuffle an HLL
+# for it (its occurrence count alone is what the report shows).
+SITE_HLL_CATEGORIES = frozenset({"both", "modern_only", "legacy_only"})
 
 
 class TransitionContext(NamedTuple):
@@ -279,7 +290,7 @@ class TransitionStats:
 
     def add(self, pair_key: str, category: str, site: Optional[str]) -> None:
         self.occ.setdefault(pair_key, Counter())[category] += 1
-        if site:
+        if site and category in SITE_HLL_CATEGORIES:
             per_cat = self.hlls.setdefault(pair_key, {})
             registers = per_cat.get(category)
             if registers is None:
@@ -358,9 +369,10 @@ def transition_rows(transition: Dict[str, Any]) -> List[Dict[str, Any]]:
     Joins :data:`TRANSITION_PAIRS` (labels, legacy-only flag) with the merged
     counts. For each pair computes the four occurrence buckets, the "present"
     rollups (``both`` counted on each side), the occurrence-level transition
-    ratio over the scoped population (legacy or modern present), and the
-    site-level estimates / ratio via HLL union. Pairs with no observations are
-    still emitted (all zeros) so the report shows the full tracked set.
+    ratio over the legacy+modern presence sum (``scoped`` = ``modern_present +
+    legacy_present``, so a ``both`` response is weighted into each side), and
+    the site-level estimates / ratio via HLL union. Pairs with no observations
+    are still emitted (all zeros) so the report shows the full tracked set.
     """
     pairs_data: Dict[str, Any] = transition.get("pairs") or {}
     rows: List[Dict[str, Any]] = []
