@@ -224,12 +224,18 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     src_vary = source.get("vary")
     if src_vary:
         merge_vary(target.setdefault("vary", {}), src_vary)
+    src_value_histograms = source.get("value_histograms")
+    if src_value_histograms:
+        merge_value_histograms(
+            target.setdefault("value_histograms", {}), src_value_histograms
+        )
 
 
 GLOBALS_KEY = "globals"
 NOTE_KEY_PREFIX = "note:"
 CSP_SIZES_KEY = "csp_sizes"
 VARY_KEY = "vary"
+VALUE_HISTOGRAMS_KEY = "value_histograms"
 
 # Defensive cap on the per-site CSP-size dict. The dict naturally bounds at
 # the cardinality of distinct sites the mapper saw (~ TOP_N in practice),
@@ -293,6 +299,18 @@ def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     # first one we see and stick with it.
     if "run_context" not in target and source.get("run_context"):
         target["run_context"] = source["run_context"]
+
+
+def merge_value_histograms(
+    target: Dict[str, Dict[str, int]], source: Dict[str, Dict[str, int]]
+) -> None:
+    """Merge the corpus-wide numeric-header histograms (issue #8).
+
+    Each histogram is a plain bucket -> count map, so per-histogram merging is
+    a sum. Bucket cardinality is bounded by LIFETIME_BUCKETS, so there is no
+    trim path to maintain.
+    """
+    _merge_nested_counts(target, source)
 
 
 def merge_csp_sizes(target: Dict[str, int], source: Dict[str, int]) -> None:
@@ -699,6 +717,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         vary = stats.get("vary") or {}
         if vary:
             yield VARY_KEY, vary
+        value_histograms = stats.get("value_histograms") or {}
+        if value_histograms:
+            yield VALUE_HISTOGRAMS_KEY, value_histograms
 
     # No combiner: mapper_final emits each (key, value) exactly once per
     # mapper, so there is nothing for a combiner to fold. The mrjob default
@@ -728,6 +749,11 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                 merge_vary(merged_vary, value)
             trim_vary(merged_vary, TOP_K_RECIPES)
             yield VARY_KEY, merged_vary
+        elif key == VALUE_HISTOGRAMS_KEY:
+            merged_histograms: Dict[str, Dict[str, int]] = {}
+            for value in values:
+                merge_value_histograms(merged_histograms, value)
+            yield VALUE_HISTOGRAMS_KEY, merged_histograms
 
 
 def main() -> None:

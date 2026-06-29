@@ -15,6 +15,7 @@ from cc_lint.emr.job import (
     merge_globals,
     merge_note,
     merge_stats_dict,
+    merge_value_histograms,
     sample_key,
     trim_stats_dict,
 )
@@ -124,6 +125,7 @@ class TestMergeStatsDict(unittest.TestCase):
                 "sites_hll": first_hll,
                 "csp_max_by_site": {"a.example": 100},
                 "severity_counts": {"warn": 30, "clean": 20},
+                "value_histograms": {"age": {"1-10 min": 3, "0": 1}},
                 "vary": {
                     "responses_with_vary": 4,
                     "recipes": {"occ": {"accept-encoding": 4}, "hlls": {}},
@@ -141,6 +143,10 @@ class TestMergeStatsDict(unittest.TestCase):
                 "sites_hll": second_hll,
                 "csp_max_by_site": {"a.example": 500, "b.example": 200},
                 "severity_counts": {"warn": 10, "info": 15, "clean": 5},
+                "value_histograms": {
+                    "age": {"1-10 min": 2},
+                    "hsts_max_age": {"1-10 years": 4},
+                },
                 "vary": {
                     "responses_with_vary": 2,
                     "recipes": {"occ": {"accept-encoding": 1, "cookie": 1}, "hlls": {}},
@@ -177,6 +183,34 @@ class TestMergeStatsDict(unittest.TestCase):
         self.assertEqual(
             target["vary"]["marginals"]["occ"],
             {"accept-encoding": 5, "cookie": 1},
+        )
+        # Value histograms (issue #8) survive: buckets sum per histogram and
+        # a histogram seen in only one fold still carries through.
+        self.assertEqual(
+            target["value_histograms"],
+            {
+                "age": {"1-10 min": 5, "0": 1},
+                "hsts_max_age": {"1-10 years": 4},
+            },
+        )
+
+
+class TestMergeValueHistograms(unittest.TestCase):
+    def test_buckets_sum_per_histogram(self) -> None:
+        target: Dict[str, Dict[str, int]] = {}
+        merge_value_histograms(
+            target, {"age": {"1-10 min": 2}, "cache_control_max_age": {"0": 1}}
+        )
+        merge_value_histograms(
+            target,
+            {"age": {"1-10 min": 3, ">10 years": 1}, "cache_control_max_age": {"0": 4}},
+        )
+        self.assertEqual(
+            target,
+            {
+                "age": {"1-10 min": 5, ">10 years": 1},
+                "cache_control_max_age": {"0": 5},
+            },
         )
 
 
