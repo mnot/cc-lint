@@ -35,7 +35,9 @@ import os
 import sys
 from typing import Any, Dict, Iterator, Tuple
 
+from cc_lint.cooccur import merge_cooccur
 from cc_lint.emr.job import (
+    COOCCUR_KEY,
     CSP_SIZES_KEY,
     GLOBALS_KEY,
     NOTE_KEY_PREFIX,
@@ -93,6 +95,8 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
             merge_vary(merged.setdefault("vary", {}), value)
         elif key == VALUE_HISTOGRAMS_KEY:
             merge_value_histograms(merged.setdefault("value_histograms", {}), value)
+        elif key == COOCCUR_KEY:
+            merge_cooccur(merged.setdefault("cooccur", {}), value)
         else:
             print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
 

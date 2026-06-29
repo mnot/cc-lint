@@ -31,12 +31,14 @@ breaking any of them turns an 11-hour run into a memory disaster:
 - **Per-mapper top-K trim** before emit. `TOP_K_VAR_VALUES=2000` per
   `vars[var_name]` dict; `TOP_K_FIELD_COUNTS=5000` for field/unprocessed
   counts; `TOP_K_CSP_SITES=100000` for the per-site CSP-size dict;
-  `TOP_K_RECIPES=2000` per Vary recipe/marginal dict. Adding a new tracked
-  dict means adding a trim path and a `truncated_*` flag.
+  `TOP_K_RECIPES=2000` per Vary recipe/marginal dict (reused for the
+  co-occurrence bundle/marginal/pair dicts too). Adding a new tracked dict
+  means adding a trim path and a `truncated_*` flag.
 - **Sharded reducer keys** (`cc_lint.emr.job`): the mapper does NOT emit a
   single "stats" record. It emits `GLOBALS_KEY`, `NOTE_KEY_PREFIX:<note_id>`
-  per note, `CSP_SIZES_KEY`, and `VARY_KEY`. Adding a new top-level
-  aggregation usually means a new shard key; do not stuff it into globals.
+  per note, `CSP_SIZES_KEY`, `VARY_KEY`, and `COOCCUR_KEY`. Adding a new
+  top-level aggregation usually means a new shard key; do not stuff it into
+  globals.
 - **HLL precision**: `HLL_P_GLOBAL=12` (4096 registers), `HLL_P_PER_NOTE=8`
   (256 registers), `HLL_P_RECIPE=6` (64 registers). Per-note HLLs are
   deliberately less precise to keep shuffle bounded across ~150 notes.
@@ -57,9 +59,12 @@ breaking any of them turns an 11-hour run into a memory disaster:
 
 ## Merge contract (don't drop fields)
 
-`StatsCollector.to_dict()` produces 8 fields today (the 8th, `vary`, is
-emitted only when a response carried a `Vary` header). `merge_stats_dict()`
-in `cc_lint/emr/job.py` must merge **every** field, and `merge_note()` must
+`StatsCollector.to_dict()` produces 9 fields today (the 8th, `vary`, is
+emitted only when a response carried a `Vary` header; the 9th, `cooccur`,
+the security-header co-occurrence block, whenever there were any responses).
+`merge_stats_dict()` in `cc_lint/emr/job.py` must merge **every** field
+(`merge_cooccur` covers the bundle/marginal/pair dicts and the per-bundle
+`by_layer` infra breakdown), and `merge_note()` must
 merge every per-note field — anything missed is silently dropped at
 mapper-aggregation time, the reducer never sees it, and the report shows
 zeros. We had this exact bug; the regression test in

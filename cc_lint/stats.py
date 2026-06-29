@@ -5,6 +5,7 @@ from httplint.field.finder import UnknownHttpField
 from httplint.message import HttpResponseLinter
 from httplint.note import Note, levels
 
+from cc_lint.cooccur import bundle_key, pair_keys, present_security_headers
 from cc_lint.fingerprint import UNMATCHED, Fingerprinter, default_fingerprinter
 from cc_lint.histograms import byte_bucket, duration_bucket, lifetime_bucket
 from cc_lint.hll import (
@@ -15,10 +16,10 @@ from cc_lint.hll import (
     make_registers,
 )
 from cc_lint.ipasn import IpAsnTable
-from cc_lint.recipes import RecipeStats
+from cc_lint.recipes import RecipeStats, recipe_key
 from cc_lint.top_sites import normalize_site
 from cc_lint.types import NoteDataType, SampleType
-from cc_lint.vary import ASTERISK, recipe_key, vary_tokens
+from cc_lint.vary import ASTERISK, vary_tokens
 
 
 def _level_to_severity(level: Any) -> Optional[str]:
@@ -435,6 +436,19 @@ class StatsCollector:
         # and cost almost nothing in shuffle (a handful of histograms, each
         # bounded by LIFETIME_BUCKETS).
         self.value_histograms: Dict[str, Counter[str]] = {}
+        # Security-header co-occurrence (issue #6). A bundle is the subset of
+        # the curated security/policy alphabet present on a response (the
+        # empty bundle counts -- "no security headers at all" is a headline).
+        # Bundles and pairs are alphabet-bounded but multiply by present-set
+        # cardinality, so their site HLLs use the coarse HLL_P_RECIPE; the
+        # per-header marginals are bounded (<= len(alphabet)) and carry the
+        # conditional-lift denominators, so they keep HLL_P_PER_NOTE. by_layer
+        # is plain occurrence counts (bundle -> layer), the infra-conditioning
+        # dimension, mirroring field_counts_by_layer.
+        self.cooccur_bundles = RecipeStats(HLL_P_RECIPE)
+        self.cooccur_marginals = RecipeStats(HLL_P_PER_NOTE)
+        self.cooccur_pairs = RecipeStats(HLL_P_RECIPE)
+        self.cooccur_by_layer: Dict[str, Counter[str]] = {}
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -481,6 +495,7 @@ class StatsCollector:
         self._process_headers(header_items, linter, site, layers)
         self._process_vary(linter, site)
         self._process_value_histograms(linter)
+        self._process_cooccur(header_items, site, layers)
 
     def _process_value_histograms(self, linter: HttpResponseLinter) -> None:
         """Tabulate the corpus-wide numeric-header histograms (issue #8)."""
@@ -529,6 +544,32 @@ class StatsCollector:
             if token == ASTERISK:
                 continue
             self.vary_marginals.add(token, site)
+
+    def _process_cooccur(
+        self,
+        header_items: List[tuple[str, Any]],
+        site: Optional[str],
+        layers: Set[str],
+    ) -> None:
+        """Tabulate security-header co-occurrence for one response (issue #6).
+
+        ``header_items`` is the shared pre-lowercased (name, value) list. The
+        bundle is the present subset of the curated alphabet (``(none)`` when
+        empty); marginals and pairs cover only the headers actually present.
+        Every response contributes exactly one bundle, so the per-occurrence
+        denominator is total_responses (read back in ``to_dict``).
+        """
+        present = present_security_headers(name for name, _ in header_items)
+        bundle = bundle_key(present)
+        self.cooccur_bundles.add(bundle, site)
+        for name in present:
+            self.cooccur_marginals.add(name, site)
+        for pair in pair_keys(present):
+            self.cooccur_pairs.add(pair, site)
+        if layers:
+            per_layer = self.cooccur_by_layer.setdefault(bundle, Counter())
+            for layer in layers:
+                per_layer[layer] += 1
 
     def _process_note(
         self,
@@ -705,5 +746,16 @@ class StatsCollector:
                 "responses_with_vary": self.responses_with_vary,
                 "recipes": self.vary_recipes.to_dict(),
                 "marginals": self.vary_marginals.to_dict(),
+            }
+        if self.total_responses:
+            result["cooccur"] = {
+                "responses": self.total_responses,
+                "bundles": self.cooccur_bundles.to_dict(),
+                "marginals": self.cooccur_marginals.to_dict(),
+                "pairs": self.cooccur_pairs.to_dict(),
+                "by_layer": {
+                    bundle: dict(layers)
+                    for bundle, layers in self.cooccur_by_layer.items()
+                },
             }
         return result

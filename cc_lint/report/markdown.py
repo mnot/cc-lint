@@ -9,11 +9,25 @@ including the per-field sample URLs and their captured on-the-wire header
 values, which are exactly what downstream analysis needs.
 """
 
+# pylint: disable=too-many-lines
+# The Markdown and HTML renderers are deliberately one module each so the two
+# views stay trivially diffable against one another; splitting this would only
+# scatter closely-related report code without reducing coupling.
+
 from typing import Any, Dict, List, Optional, Tuple
 
+from cc_lint.cooccur import (
+    EMPTY_BUNDLE_LABEL,
+    conditional_lifts,
+    empty_bundle_count,
+    layer_default_bundles,
+    ranked_bundles,
+    ranked_marginals,
+)
 from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
 from cc_lint.histograms import LIFETIME_BUCKET_ORDER, bucket_order
 from cc_lint.hll import hll_estimate
+from cc_lint.recipes import recipe_tokens
 from cc_lint.report.severity import (
     build_category_index,
     build_severity_index,
@@ -31,7 +45,6 @@ from cc_lint.vary import (
     factor_out,
     is_nonstandard_token,
     is_registered_field,
-    recipe_tokens,
 )
 
 _NOTE_SUMMARIES = build_summary_index()
@@ -799,6 +812,140 @@ def _render_vary_section(vary: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _cooccur_pct(count: int, denom: int) -> str:
+    return f"{count / denom * 100:.2f}%" if denom else "—"
+
+
+def _cooccur_sites(hlls: Dict[str, Any], key: str) -> str:
+    registers = hlls.get(key)
+    if isinstance(registers, list) and registers:
+        est = hll_estimate(registers)
+        if est > 0:
+            return f"~{_fmt_count(est)}"
+    return "—"
+
+
+def _bundle_label_md(bundle: str) -> str:
+    if bundle == EMPTY_BUNDLE_LABEL:
+        return f"_{_md_escape_pipe(bundle)}_"
+    return _md_escape_pipe(bundle)
+
+
+def _render_cooccur_section(cooccur: Dict[str, Any]) -> List[str]:
+    if not cooccur:
+        return []
+    denom = int(cooccur.get("responses", 0))
+    if denom <= 0:
+        return []
+    bundle_hlls: Dict[str, Any] = (cooccur.get("bundles") or {}).get("hlls", {})
+    marg_hlls: Dict[str, Any] = (cooccur.get("marginals") or {}).get("hlls", {})
+    none_count = empty_bundle_count(cooccur)
+
+    lines = [
+        "## Header co-occurrence",
+        "",
+        "Which security / policy response headers travel together. A *bundle* "
+        "is the set of those headers present on a response (from a fixed "
+        f"curated alphabet); `{EMPTY_BUNDLE_LABEL}` means none were present. "
+        "*Responses* is occurrence-weighted; *Sites* is a HyperLogLog estimate "
+        f"of distinct operators. Shares are of all {_fmt_count(denom)} "
+        "responses.",
+        "",
+        f"**{_cooccur_pct(none_count, denom)}** of responses "
+        f"({_fmt_count(none_count)}) carried **no** security header from the "
+        "tracked set.",
+        "",
+        "### Top header bundles",
+        "",
+    ]
+    if cooccur.get("bundles_truncated"):
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    lines.append("| Bundle | Responses | % of responses | Sites |")
+    lines.append("| --- | --- | --- | --- |")
+    bundles = ranked_bundles(cooccur)
+    for bundle, count in bundles[:25]:
+        lines.append(
+            f"| {_bundle_label_md(bundle)} | {_fmt_count(count)} | "
+            f"{_cooccur_pct(count, denom)} | {_cooccur_sites(bundle_hlls, bundle)} |"
+        )
+    if len(bundles) > 25:
+        lines.append(f"_… {len(bundles) - 25} more bundles not shown …_")
+    lines.append("")
+
+    lines.append("### Conditional lifts")
+    lines.append("")
+    lines.append(
+        "For the most common co-occurring pairs: `P(A|B)` is the share of "
+        "responses carrying B that also carry A. **Lift** > 1 means the two "
+        "appear together more than independent prevalence predicts."
+    )
+    lines.append("")
+    lifts = conditional_lifts(cooccur, 25)
+    if lifts:
+        lines.append(
+            "| Header A | Header B | Co-occurrences | P(A|B) | P(B|A) | Lift |"
+        )
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for row in lifts:
+            lift = f"{row['lift']:.1f}×" if row["lift"] else "—"
+            lines.append(
+                f"| {_md_escape_pipe(str(row['a']))} | "
+                f"{_md_escape_pipe(str(row['b']))} | "
+                f"{_fmt_count(int(row['joint']))} | "
+                f"{row['p_a_given_b'] * 100:.1f}% | "
+                f"{row['p_b_given_a'] * 100:.1f}% | {lift} |"
+            )
+    else:
+        lines.append("_No co-occurring pairs observed._")
+    lines.append("")
+
+    lines.append("### Per-header prevalence")
+    lines.append("")
+    if cooccur.get("marginals_truncated"):
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    lines.append("| Header | Responses | % of responses | Sites |")
+    lines.append("| --- | --- | --- | --- |")
+    for name, count in ranked_marginals(cooccur):
+        lines.append(
+            f"| {_md_escape_pipe(name)} | {_fmt_count(count)} | "
+            f"{_cooccur_pct(count, denom)} | {_cooccur_sites(marg_hlls, name)} |"
+        )
+    lines.append("")
+
+    lines.append("### Default header set by infrastructure")
+    lines.append("")
+    lines.append(
+        "Each fingerprint layer's **modal** bundle — the single most common "
+        "security-header set among the responses attributed to it — and that "
+        "bundle's share of the layer's fingerprinted responses. A high share "
+        "means the platform ships that set by default. Layers overlap."
+    )
+    lines.append("")
+    layer_defaults = layer_default_bundles(cooccur)
+    if layer_defaults:
+        try:
+            roles = dict(default_fingerprinter().roles)
+        except (OSError, ValueError):
+            roles = {}
+        lines.append("| Layer | Role | Responses | Default bundle | Share |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for row in layer_defaults[:25]:
+            layer = str(row["layer"])
+            lines.append(
+                f"| {_md_escape_pipe(layer)} | "
+                f"{_md_escape_pipe(roles.get(layer, ''))} | "
+                f"{_fmt_count(int(row['responses']))} | "
+                f"{_bundle_label_md(str(row['bundle']))} | "
+                f"{row['share'] * 100:.1f}% |"
+            )
+    else:
+        lines.append("_No fingerprinted responses to condition on._")
+    lines.append("")
+    return lines
+
+
 def _render_unprocessed(
     unprocessed_counts: Dict[str, int], truncated: bool
 ) -> List[str]:
@@ -917,6 +1064,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
     lines.extend(_render_value_histograms(data.get("value_histograms") or {}))
     lines.extend(_render_vary_section(data.get("vary") or {}))
+    lines.extend(_render_cooccur_section(data.get("cooccur") or {}))
     lines.extend(
         _render_unprocessed(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))

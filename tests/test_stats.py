@@ -102,6 +102,36 @@ class TestFingerprintAccumulation(unittest.TestCase):
         for nid in layered:
             self.assertIn("cloudflare", d["notes"][nid]["by_layer"])
 
+    def test_cooccur_bundles_and_layers(self) -> None:
+        stats = StatsCollector()
+        # Two cloudflare responses carrying the same security bundle, plus a
+        # bare response with no security header (the empty bundle).
+        for site in ("a.example", "b.example"):
+            stats.process_linter(
+                _linter_with_headers(
+                    f"http://{site}/",
+                    [
+                        ("cf-ray", "z"),
+                        ("strict-transport-security", "max-age=1"),
+                        ("x-content-type-options", "nosniff"),
+                    ],
+                )
+            )
+        stats.process_linter(
+            _linter_with_headers("http://c.example/", [("server", "nginx")])
+        )
+        co = stats.to_dict()["cooccur"]
+        self.assertEqual(co["responses"], 3)
+        bundle = "strict-transport-security, x-content-type-options"
+        self.assertEqual(co["bundles"]["occ"][bundle], 2)
+        self.assertEqual(co["bundles"]["occ"]["(none)"], 1)
+        # Pairs and marginals cover only the present headers.
+        self.assertEqual(co["pairs"]["occ"][bundle], 2)
+        self.assertEqual(co["marginals"]["occ"]["strict-transport-security"], 2)
+        # The bundle is attributed to cloudflare; the empty bundle to nginx.
+        self.assertEqual(co["by_layer"][bundle]["cloudflare"], 2)
+        self.assertEqual(co["by_layer"]["(none)"].get("nginx"), 1)
+
     def test_asn_match_and_counts(self) -> None:
         # An IP that resolves to Cloudflare's ASN should match the cloudflare
         # layer even with no Cloudflare header, and feed the ASN histogram.

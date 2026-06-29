@@ -32,6 +32,26 @@ from typing import Any, Dict, List, Optional
 
 from cc_lint.hll import HLL_P_PER_NOTE, hll_add, hll_merge, make_registers
 
+# The canonical separator between tokens in a recipe string. A recipe is the
+# sorted, deduped, ``", "``-joined set of its tokens (Vary field-names,
+# co-occurring header names, …). These two helpers are the generic
+# string<->token bridge shared by every recipe-flavoured view; the
+# header-specific normalisation (which tokens count, how they're classified)
+# lives in the per-header modules (``cc_lint.vary``, ``cc_lint.cooccur``).
+RECIPE_SEPARATOR = ", "
+
+
+def recipe_key(tokens: List[str]) -> str:
+    """Canonical recipe string: deduped, sorted, ``", "``-joined."""
+    return RECIPE_SEPARATOR.join(sorted(set(tokens)))
+
+
+def recipe_tokens(recipe: str) -> List[str]:
+    """Split a canonical recipe string back into its tokens."""
+    if not recipe:
+        return []
+    return recipe.split(RECIPE_SEPARATOR)
+
 
 class RecipeStats:
     """Accumulate per-recipe occurrence counts and per-site HLLs.
