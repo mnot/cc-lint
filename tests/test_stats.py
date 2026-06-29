@@ -361,5 +361,118 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
         self.assertIn(_WarnNote.__name__, data["notes"])
 
 
+class TestValueHistograms(unittest.TestCase):
+    """Corpus-wide numeric-header histograms (issue #8)."""
+
+    def _linter(
+        self, headers: list[tuple[str, str]], start_time: float = 1782728294.0
+    ) -> HttpResponseLinter:
+        # 1782728294 == Mon, 29 Jun 2026 10:18:14 GMT (the crawl reference
+        # time). start_time must be set before the headers are processed: the
+        # cache checker (which computes freshness) runs during finish_content.
+        linter = HttpResponseLinter(no_content=True)
+        linter.base_uri = "http://a.example/"
+        linter.start_time = start_time
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        linter.process_headers(
+            [(n.encode("latin1"), v.encode("latin1")) for n, v in headers]
+        )
+        linter.finish_content(True)
+        return linter
+
+    def test_max_age_and_s_maxage_bucketed(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            self._linter([("Cache-Control", "max-age=3600, s-maxage=600")])
+        )
+        hist = stats.to_dict()["value_histograms"]
+        self.assertEqual(hist["cache_control_max_age"], {"1-24 hours": 1})
+        self.assertEqual(hist["cache_control_s_maxage"], {"10-60 min": 1})
+
+    def test_zero_max_age_is_its_own_bucket(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(self._linter([("Cache-Control", "max-age=0")]))
+        self.assertEqual(
+            stats.to_dict()["value_histograms"]["cache_control_max_age"], {"0": 1}
+        )
+
+    def test_age_bucketed(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(self._linter([("Age", "120")]))
+        self.assertEqual(stats.to_dict()["value_histograms"]["age"], {"1-10 min": 1})
+
+    def test_hsts_max_age_bucketed(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            self._linter(
+                [("Strict-Transport-Security", "max-age=31536000; preload")]
+            )
+        )
+        self.assertEqual(
+            stats.to_dict()["value_histograms"]["hsts_max_age"], {"1-10 years": 1}
+        )
+
+    def test_cookie_lifetime_max_age_and_expires(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            self._linter(
+                [
+                    ("Set-Cookie", "a=b; Max-Age=86400"),
+                    ("Set-Cookie", "c=d; Expires=Wed, 09 Jun 2027 10:18:14 GMT"),
+                    ("Set-Cookie", "sess=1"),  # session cookie: no lifetime
+                ]
+            )
+        )
+        # One cookie ~1 day (Max-Age), one ~345 days (Expires - crawl time);
+        # the session cookie contributes nothing.
+        self.assertEqual(
+            stats.to_dict()["value_histograms"]["cookie_lifetime"],
+            {"1-7 days": 1, "30-365 days": 1},
+        )
+
+    def test_expires_date_delta_and_freshness(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            self._linter(
+                [
+                    ("Date", "Mon, 29 Jun 2026 10:18:14 GMT"),
+                    ("Expires", "Wed, 09 Jun 2027 10:18:14 GMT"),
+                ]
+            )
+        )
+        hist = stats.to_dict()["value_histograms"]
+        self.assertEqual(hist["expires_date_delta"], {"30-365 days": 1})
+        # Expires-only freshness: httplint derives the same ~345-day lifetime.
+        self.assertEqual(hist["freshness_lifetime"], {"30-365 days": 1})
+
+    def test_expires_before_date_is_negative_bucket(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            self._linter(
+                [
+                    ("Date", "Mon, 29 Jun 2026 10:18:14 GMT"),
+                    ("Expires", "Sun, 28 Jun 2026 10:18:14 GMT"),
+                ]
+            )
+        )
+        self.assertEqual(
+            stats.to_dict()["value_histograms"]["expires_date_delta"], {"negative": 1}
+        )
+
+    def test_absent_fields_yield_no_histograms(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(self._linter([("Server", "nginx")]))
+        self.assertNotIn("value_histograms", stats.to_dict())
+
+    def test_counts_accumulate_across_responses(self) -> None:
+        stats = StatsCollector()
+        for _ in range(3):
+            stats.process_linter(self._linter([("Cache-Control", "max-age=3600")]))
+        self.assertEqual(
+            stats.to_dict()["value_histograms"]["cache_control_max_age"],
+            {"1-24 hours": 3},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

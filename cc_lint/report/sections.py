@@ -15,7 +15,7 @@ import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.fingerprint import UNMATCHED
-from cc_lint.histograms import bucket_order
+from cc_lint.histograms import LIFETIME_BUCKET_ORDER, bucket_order
 from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
@@ -776,6 +776,76 @@ def render_csp_section(csp_sizes: Dict[str, int]) -> str:
         "<th></th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
+        "</section>"
+    )
+
+
+# ---- numeric header value histograms (issue #8) ---------------------------
+
+# Ordered (key, heading) pairs for the corpus-wide numeric-header histograms.
+# Order and labels mirror cc_lint.stats.VALUE_HISTOGRAMS; markdown.py keeps an
+# identical list so the two renderers stay in sync.
+_VALUE_HISTOGRAM_LABELS: List[Tuple[str, str]] = [
+    ("cache_control_max_age", "Cache-Control: max-age"),
+    ("cache_control_s_maxage", "Cache-Control: s-maxage"),
+    ("age", "Age"),
+    ("hsts_max_age", "Strict-Transport-Security: max-age"),
+    ("cookie_lifetime", "Cookie lifetime (Max-Age / Expires)"),
+    ("freshness_lifetime", "Computed freshness lifetime"),
+    ("expires_date_delta", "Expires − Date delta"),
+]
+
+
+def _render_value_histogram_table(heading: str, counts: Dict[str, int]) -> str:
+    total = sum(counts.values())
+    if total == 0:
+        return ""
+    rows: List[str] = []
+    for label in LIFETIME_BUCKET_ORDER:
+        count = counts.get(label, 0)
+        pct = count / total * 100  # total > 0: guarded above
+        bar_width = int(pct * 2)  # 200px max
+        rows.append(
+            f"<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{_format_count(count)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f'<td><span class="csp-bar" style="width:{bar_width}px"></span></td>'
+            f"</tr>"
+        )
+    return (
+        f"<h3>{html.escape(heading)}</h3>"
+        f'<p class="muted">Total occurrences: {_format_count(total)}.</p>'
+        '<table class="data-table csp-table">'
+        "<thead><tr><th>Value</th><th>Occurrences</th><th>%</th>"
+        "<th></th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def render_value_histograms_section(value_histograms: Dict[str, Dict[str, int]]) -> str:
+    """Corpus-wide distributions of numeric/temporal header values (issue #8)."""
+    if not value_histograms:
+        return ""
+    tables = [
+        _render_value_histogram_table(heading, value_histograms[key])
+        for key, heading in _VALUE_HISTOGRAM_LABELS
+        if value_histograms.get(key)
+    ]
+    tables = [t for t in tables if t]
+    if not tables:
+        return ""
+    return (
+        '<section id="value-histograms">'
+        "<h2>Numeric header value distributions</h2>"
+        '<p class="muted">Per-occurrence distributions of numeric and temporal '
+        "header values across all analysed responses that carried the field. "
+        "Lifetimes use a shared log-scaled bucket set, so the histograms are "
+        'comparable. The "negative" bucket holds anomalies (a value that '
+        "parsed negative, or an Expires that predates Date — stale on "
+        'arrival); "0" is a distinct deliberate "do not reuse" signal.</p>'
+        f"{''.join(tables)}"
         "</section>"
     )
 

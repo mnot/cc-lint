@@ -314,6 +314,27 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Content-Security-Policy size by site", md)
         self.assertIn("| 1-99 B |", md)
 
+    def test_value_histograms_render(self) -> None:
+        data = dict(SAMPLE_STATS)
+        data["value_histograms"] = {
+            "cache_control_max_age": {"0": 5, "1-24 hours": 20, ">10 years": 1},
+            "hsts_max_age": {"1-10 years": 8, "negative": 1},
+        }
+        html, md = self._render_both(data)
+        self.assertIn("Numeric header value distributions", html)
+        self.assertIn("Cache-Control: max-age", html)
+        self.assertIn("Strict-Transport-Security: max-age", html)
+        self.assertIn("&gt;10 years", html)  # bucket label HTML-escaped
+        # Same content in markdown, with the histograms as subsections.
+        self.assertIn("## Numeric header value distributions", md)
+        self.assertIn("### Cache-Control: max-age", md)
+        self.assertIn("| 1-24 hours |", md)
+
+    def test_no_value_histograms_section_absent(self) -> None:
+        html, md = self._render_both(dict(SAMPLE_STATS))
+        self.assertNotIn("Numeric header value distributions", html)
+        self.assertNotIn("Numeric header value distributions", md)
+
     def test_health_summary_renders(self) -> None:
         data = dict(SAMPLE_STATS)
         data["severity_counts"] = {

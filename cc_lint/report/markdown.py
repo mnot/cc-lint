@@ -12,7 +12,7 @@ values, which are exactly what downstream analysis needs.
 from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
-from cc_lint.histograms import bucket_order
+from cc_lint.histograms import LIFETIME_BUCKET_ORDER, bucket_order
 from cc_lint.hll import hll_estimate
 from cc_lint.report.severity import (
     build_category_index,
@@ -484,6 +484,59 @@ def _render_csp_section(csp_sizes: Dict[str, int]) -> List[str]:
     return lines
 
 
+# Ordered (key, heading) pairs for the corpus-wide numeric-header histograms
+# (issue #8). Mirrors sections._VALUE_HISTOGRAM_LABELS so the HTML and Markdown
+# renderers stay in sync.
+_VALUE_HISTOGRAM_LABELS: List[Tuple[str, str]] = [
+    ("cache_control_max_age", "Cache-Control: max-age"),
+    ("cache_control_s_maxage", "Cache-Control: s-maxage"),
+    ("age", "Age"),
+    ("hsts_max_age", "Strict-Transport-Security: max-age"),
+    ("cookie_lifetime", "Cookie lifetime (Max-Age / Expires)"),
+    ("freshness_lifetime", "Computed freshness lifetime"),
+    ("expires_date_delta", "Expires − Date delta"),
+]
+
+
+def _render_value_histograms(
+    value_histograms: Dict[str, Dict[str, int]]
+) -> List[str]:
+    if not value_histograms:
+        return []
+    blocks: List[str] = []
+    for key, heading in _VALUE_HISTOGRAM_LABELS:
+        counts = value_histograms.get(key) or {}
+        total = sum(counts.values())
+        if total == 0:
+            continue
+        blocks.append(f"### {heading}")
+        blocks.append("")
+        blocks.append(f"Total occurrences: {_fmt_count(total)}.")
+        blocks.append("")
+        blocks.append("| Value | Occurrences | % |")
+        blocks.append("| --- | --- | --- |")
+        for label in LIFETIME_BUCKET_ORDER:
+            count = counts.get(label, 0)
+            pct = count / total * 100  # total > 0: guarded above
+            blocks.append(f"| {label} | {_fmt_count(count)} | {pct:.1f}% |")
+        blocks.append("")
+    if not blocks:
+        return []
+    lines = [
+        "## Numeric header value distributions",
+        "",
+        "Per-occurrence distributions of numeric and temporal header values "
+        "across all analysed responses that carried the field. Lifetimes share "
+        'a log-scaled bucket set, so the histograms are comparable. The '
+        '"negative" bucket holds anomalies (a value that parsed negative, or '
+        "an Expires that predates Date); \"0\" is a distinct deliberate "
+        '"do not reuse" signal.',
+        "",
+    ]
+    lines.extend(blocks)
+    return lines
+
+
 def _vary_pct(count: int, denom: int) -> str:
     return f"{count / denom * 100:.2f}%" if denom else "—"
 
@@ -862,6 +915,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
         )
     )
     lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
+    lines.extend(_render_value_histograms(data.get("value_histograms") or {}))
     lines.extend(_render_vary_section(data.get("vary") or {}))
     lines.extend(
         _render_unprocessed(

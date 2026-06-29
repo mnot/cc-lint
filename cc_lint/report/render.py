@@ -25,6 +25,7 @@ from cc_lint.report.sections import (
     render_notes_section,
     render_run_context,
     render_unprocessed_section,
+    render_value_histograms_section,
     render_vary_section,
 )
 from cc_lint.report.severity import (
@@ -114,6 +115,7 @@ def _build_html(data: Dict[str, Any]) -> str:
             bool(data.get("truncated_asn_counts")),
         ),
         render_csp_section(csp_sizes),
+        render_value_histograms_section(data.get("value_histograms") or {}),
         render_vary_section(vary),
         render_unprocessed_section(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))

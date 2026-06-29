@@ -100,6 +100,40 @@ class TestMergeResults(unittest.TestCase):
                 {"a.example": 500, "b.example": 0, "c.example": 300},
             )
 
+    def test_value_histograms_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as results:
+            _write_part(
+                os.path.join(results, "part-00000"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 1,
+                            "field_counts": {},
+                            "unprocessed_counts": {},
+                        },
+                    ),
+                    ("value_histograms", {"age": {"1-10 min": 2, "0": 1}}),
+                ],
+            )
+            _write_part(
+                os.path.join(results, "part-00001"),
+                [
+                    (
+                        "value_histograms",
+                        {"age": {"1-10 min": 3}, "hsts_max_age": {"1-10 years": 4}},
+                    ),
+                ],
+            )
+            merged = merge_results(results)
+            self.assertEqual(
+                merged["value_histograms"],
+                {
+                    "age": {"1-10 min": 5, "0": 1},
+                    "hsts_max_age": {"1-10 years": 4},
+                },
+            )
+
     def test_severity_counts_summed(self) -> None:
         with tempfile.TemporaryDirectory() as results:
             _write_part(
