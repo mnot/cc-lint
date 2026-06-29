@@ -248,7 +248,8 @@ STYLE = """
     min-width: 1px;
   }
 
-  span.vary-synthetic {
+  span.vary-synthetic,
+  span.cc-synthetic {
     color: var(--bad-fg);
     font-weight: 600;
   }

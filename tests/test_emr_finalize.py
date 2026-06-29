@@ -189,6 +189,58 @@ class TestMergeResults(unittest.TestCase):
                 {"accept-encoding": 4, "cookie": 1},
             )
 
+    def test_cache_control_blocks_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as results:
+            _write_part(
+                os.path.join(results, "part-00000"),
+                [
+                    (
+                        "globals",
+                        {
+                            "total_responses": 5,
+                            "field_counts": {},
+                            "unprocessed_counts": {},
+                        },
+                    ),
+                    (
+                        "cache_control",
+                        {
+                            "responses_with_cc": 3,
+                            "recipes": {"occ": {"max-age=N, public": 3}, "hlls": {}},
+                            "marginals": {
+                                "occ": {"max-age": 3, "public": 3},
+                                "hlls": {},
+                            },
+                        },
+                    ),
+                ],
+            )
+            _write_part(
+                os.path.join(results, "part-00001"),
+                [
+                    (
+                        "cache_control",
+                        {
+                            "responses_with_cc": 2,
+                            "recipes": {
+                                "occ": {"max-age=N, public": 1, "no-store": 1},
+                                "hlls": {},
+                            },
+                            "marginals": {
+                                "occ": {"max-age": 1, "public": 1, "no-store": 1},
+                                "hlls": {},
+                            },
+                        },
+                    ),
+                ],
+            )
+            merged = merge_results(results)
+            self.assertEqual(merged["cache_control"]["responses_with_cc"], 5)
+            self.assertEqual(
+                merged["cache_control"]["recipes"]["occ"],
+                {"max-age=N, public": 4, "no-store": 1},
+            )
+
     def test_skips_malformed_lines(self) -> None:
         with tempfile.TemporaryDirectory() as results:
             with open(

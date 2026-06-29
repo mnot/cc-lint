@@ -5,6 +5,12 @@ from httplint.field.finder import UnknownHttpField
 from httplint.message import HttpResponseLinter
 from httplint.note import Note, levels
 
+from cc_lint.cache_control import COUNT_FIELD as CC_COUNT_FIELD
+from cc_lint.cache_control import (
+    cc_directives,
+)
+from cc_lint.cache_control import marginal_key as cc_marginal_key
+from cc_lint.cache_control import recipe_key as cc_recipe_key
 from cc_lint.fingerprint import UNMATCHED, Fingerprinter, default_fingerprinter
 from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.hll import (
@@ -311,6 +317,15 @@ class StatsCollector:
         self.responses_with_vary = 0
         self.vary_recipes = RecipeStats(HLL_P_RECIPE)
         self.vary_marginals = RecipeStats(HLL_P_PER_NOTE)
+        # Cache-Control composition (issue #9). Same recipe machinery as Vary:
+        # the recipe is the normalised directive set (values elided to "=N"),
+        # marginals are the per-directive rollup. Recipes are high-cardinality
+        # (capped at TOP_K_RECIPES) so their per-site HLLs use the coarse
+        # HLL_P_RECIPE precision; marginals are bounded (a few dozen
+        # directives) and keep the default HLL_P_PER_NOTE.
+        self.responses_with_cc = 0
+        self.cc_recipes = RecipeStats(HLL_P_RECIPE)
+        self.cc_marginals = RecipeStats(HLL_P_PER_NOTE)
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
@@ -356,6 +371,7 @@ class StatsCollector:
         self.severity_counts[max_severity or "clean"] += 1
         self._process_headers(header_items, linter, site, layers)
         self._process_vary(linter, site)
+        self._process_cache_control(linter, site)
 
     def _fingerprint(
         self,
@@ -394,6 +410,24 @@ class StatsCollector:
             if token == ASTERISK:
                 continue
             self.vary_marginals.add(token, site)
+
+    def _process_cache_control(
+        self, linter: HttpResponseLinter, site: Optional[str]
+    ) -> None:
+        """Tabulate Cache-Control composition for responses carrying one.
+
+        Records the full normalised directive set as a recipe and each bare
+        directive name as a marginal, both keyed for per-occurrence and
+        per-site rollups. See :mod:`cc_lint.cache_control` for the value
+        normalisation that bounds the recipe space.
+        """
+        tokens = cc_directives(linter)
+        if not tokens:
+            return
+        self.responses_with_cc += 1
+        self.cc_recipes.add(cc_recipe_key(tokens), site)
+        for directive in {cc_marginal_key(token) for token in tokens}:
+            self.cc_marginals.add(directive, site)
 
     def _process_note(
         self,
@@ -565,5 +599,11 @@ class StatsCollector:
                 "responses_with_vary": self.responses_with_vary,
                 "recipes": self.vary_recipes.to_dict(),
                 "marginals": self.vary_marginals.to_dict(),
+            }
+        if self.responses_with_cc:
+            result["cache_control"] = {
+                CC_COUNT_FIELD: self.responses_with_cc,
+                "recipes": self.cc_recipes.to_dict(),
+                "marginals": self.cc_marginals.to_dict(),
             }
         return result

@@ -9,8 +9,18 @@ including the per-field sample URLs and their captured on-the-wire header
 values, which are exactly what downstream analysis needs.
 """
 
+# Kept as one module on purpose (see CLAUDE.md): the Markdown renderer mirrors
+# the HTML sections module section-for-section, so they stay in sync.
+# pylint: disable=too-many-lines
+
 from typing import Any, Dict, List, Optional, Tuple
 
+from cc_lint.cache_control import COUNT_FIELD as CC_COUNT_FIELD
+from cc_lint.cache_control import count_nonstandard as cc_count_nonstandard
+from cc_lint.cache_control import (
+    is_nonstandard_directive,
+)
+from cc_lint.cache_control import recipe_tokens as cc_recipe_tokens
 from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
 from cc_lint.histograms import bucket_order
 from cc_lint.hll import hll_estimate
@@ -746,6 +756,136 @@ def _render_vary_section(vary: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _cc_recipe_label_md(recipe: str) -> str:
+    """Recipe string with non-standard directives bolded inline.
+
+    Mirrors the HTML renderer's ``cc-synthetic`` highlighting so both views
+    flag *which* directives are non-standard, not just how many.
+    """
+    parts = []
+    for token in cc_recipe_tokens(recipe):
+        escaped = _md_escape_pipe(token)
+        parts.append(f"**{escaped}**" if is_nonstandard_directive(token) else escaped)
+    return ", ".join(parts)
+
+
+def _render_cc_recipe_md(recipe_dict: Dict[str, Any], denom: int) -> List[str]:
+    occ: Dict[str, int] = recipe_dict.get("occ", {})
+    hlls: Dict[str, Any] = recipe_dict.get("hlls", {})
+    if not occ:
+        return ["_No data._", ""]
+    ordered = sorted(occ.items(), key=lambda kv: kv[1], reverse=True)
+    lines = [
+        "| Recipe | Responses | % of Cache-Control | Sites | Non-standard |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for recipe, count in ordered[:25]:
+        nonstd = cc_count_nonstandard(recipe)
+        lines.append(
+            f"| {_cc_recipe_label_md(recipe)} | {_fmt_count(count)} | "
+            f"{_vary_pct(count, denom)} | {_vary_sites(hlls, recipe)} | "
+            f"{_fmt_count(nonstd) if nonstd else '—'} |"
+        )
+    if len(ordered) > 25:
+        lines.append(f"_… {len(ordered) - 25} more recipes not shown …_")
+    lines.append("")
+    return lines
+
+
+def _render_cc_marginal_md(
+    entries: List[Tuple[str, int]],
+    hlls: Dict[str, Any],
+    denom: int,
+    show_standard: bool,
+    limit: int = 30,
+) -> List[str]:
+    if not entries:
+        return ["_None observed._", ""]
+    headers = ["Directive", "Responses", "% of Cache-Control", "Sites"]
+    if show_standard:
+        headers.append("Standard?")
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for directive, count in entries[:limit]:
+        cells = [
+            _md_escape_pipe(directive),
+            _fmt_count(count),
+            _vary_pct(count, denom),
+            _vary_sites(hlls, directive),
+        ]
+        if show_standard:
+            cells.append("no" if is_nonstandard_directive(directive) else "yes")
+        lines.append("| " + " | ".join(cells) + " |")
+    if len(entries) > limit:
+        lines.append(f"_… {len(entries) - limit} more not shown …_")
+    lines.append("")
+    return lines
+
+
+def _render_cache_control_section(cache_control: Dict[str, Any]) -> List[str]:
+    if not cache_control:
+        return []
+    denom = int(cache_control.get(CC_COUNT_FIELD, 0))
+    if denom <= 0:
+        return []
+    recipes: Dict[str, Any] = cache_control.get("recipes") or {}
+    marginals: Dict[str, Any] = cache_control.get("marginals") or {}
+    marg_occ: Dict[str, int] = marginals.get("occ", {})
+    marg_hlls: Dict[str, Any] = marginals.get("hlls", {})
+
+    lines = [
+        "## Cache-Control recipes",
+        "",
+        f"Composition of `Cache-Control` across the {_fmt_count(denom)} "
+        "responses that carried one. A *recipe* is the normalised, deduped, "
+        "sorted set of directives, with every value collapsed to `=N` (so "
+        "`max-age=0` and `max-age=31536000` share one recipe). This shows the "
+        "whole shape operators ship, where `CC_CONFLICTING` flags only the "
+        "conflict. *Responses* is occurrence-weighted; *Sites* is a "
+        "HyperLogLog estimate of distinct operators.",
+        "",
+        "### Top Cache-Control recipes",
+        "",
+    ]
+    if cache_control.get("recipes_truncated"):
+        lines.extend(["_Long tail elided during shuffle; head only._", ""])
+    lines.extend(_render_cc_recipe_md(recipes, denom))
+
+    lines.extend(
+        [
+            "### Cache-Control directives (marginals)",
+            "",
+            "Prevalence of each directive, regardless of value or combination, "
+            "as a share of responses carrying `Cache-Control`.",
+            "",
+        ]
+    )
+    if cache_control.get("marginals_truncated"):
+        lines.extend(["_Long tail elided during shuffle; head only._", ""])
+    top_marginals = sorted(marg_occ.items(), key=lambda kv: kv[1], reverse=True)
+    lines.extend(_render_cc_marginal_md(top_marginals, marg_hlls, denom, True))
+
+    lines.extend(
+        [
+            "### Non-standard directives",
+            "",
+            "Directives outside httplint's RFC 9111 registry — vendor knobs, "
+            "edge-CDN extensions, and typos. Approximate: a registered "
+            "directive httplint lacks a parser for would also land here.",
+            "",
+        ]
+    )
+    nonstandard = sorted(
+        ((d, c) for d, c in marg_occ.items() if is_nonstandard_directive(d)),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    lines.extend(_render_cc_marginal_md(nonstandard, marg_hlls, denom, False))
+    return lines
+
+
 def _render_unprocessed(
     unprocessed_counts: Dict[str, int], truncated: bool
 ) -> List[str]:
@@ -863,6 +1003,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
     )
     lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
     lines.extend(_render_vary_section(data.get("vary") or {}))
+    lines.extend(_render_cache_control_section(data.get("cache_control") or {}))
     lines.extend(
         _render_unprocessed(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))

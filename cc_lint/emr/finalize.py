@@ -35,7 +35,9 @@ import os
 import sys
 from typing import Any, Dict, Iterator, Tuple
 
+from cc_lint.cache_control import merge_cache_control
 from cc_lint.emr.job import (
+    CACHE_CONTROL_KEY,
     CSP_SIZES_KEY,
     GLOBALS_KEY,
     NOTE_KEY_PREFIX,
@@ -89,6 +91,8 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
             merge_csp_sizes(merged["csp_max_by_site"], value)
         elif key == VARY_KEY:
             merge_vary(merged.setdefault("vary", {}), value)
+        elif key == CACHE_CONTROL_KEY:
+            merge_cache_control(merged.setdefault("cache_control", {}), value)
         else:
             print(f"WARN: ignoring unexpected key {key!r}", file=sys.stderr)
 

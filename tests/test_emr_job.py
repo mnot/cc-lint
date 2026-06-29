@@ -107,7 +107,7 @@ class TestMergeStatsDict(unittest.TestCase):
         # StatsCollector.to_dict() emits. Dropping any field silently
         # discards data when the EMR mapper folds per-WARC worker output
         # into its running stats. Verify sites_hll, severity_counts,
-        # csp_max_by_site, and vary all survive the merge.
+        # csp_max_by_site, vary, and cache_control all survive the merge.
         first_hll = make_registers(HLL_P_GLOBAL)
         second_hll = make_registers(HLL_P_GLOBAL)
         hll_add(first_hll, HLL_P_GLOBAL, "a.example")
@@ -129,6 +129,11 @@ class TestMergeStatsDict(unittest.TestCase):
                     "recipes": {"occ": {"accept-encoding": 4}, "hlls": {}},
                     "marginals": {"occ": {"accept-encoding": 4}, "hlls": {}},
                 },
+                "cache_control": {
+                    "responses_with_cc": 4,
+                    "recipes": {"occ": {"max-age=N, public": 4}, "hlls": {}},
+                    "marginals": {"occ": {"max-age": 4, "public": 4}, "hlls": {}},
+                },
             },
         )
         merge_stats_dict(
@@ -146,6 +151,17 @@ class TestMergeStatsDict(unittest.TestCase):
                     "recipes": {"occ": {"accept-encoding": 1, "cookie": 1}, "hlls": {}},
                     "marginals": {
                         "occ": {"accept-encoding": 1, "cookie": 1},
+                        "hlls": {},
+                    },
+                },
+                "cache_control": {
+                    "responses_with_cc": 2,
+                    "recipes": {
+                        "occ": {"max-age=N, public": 1, "no-store": 1},
+                        "hlls": {},
+                    },
+                    "marginals": {
+                        "occ": {"max-age": 1, "public": 1, "no-store": 1},
                         "hlls": {},
                     },
                 },
@@ -177,6 +193,17 @@ class TestMergeStatsDict(unittest.TestCase):
         self.assertEqual(
             target["vary"]["marginals"]["occ"],
             {"accept-encoding": 5, "cookie": 1},
+        )
+        # Cache-Control block survives: responses_with_cc sums and
+        # recipe/marginal occurrence counts merge across the two folds.
+        self.assertEqual(target["cache_control"]["responses_with_cc"], 6)
+        self.assertEqual(
+            target["cache_control"]["recipes"]["occ"],
+            {"max-age=N, public": 5, "no-store": 1},
+        )
+        self.assertEqual(
+            target["cache_control"]["marginals"]["occ"],
+            {"max-age": 5, "public": 5, "no-store": 1},
         )
 
 

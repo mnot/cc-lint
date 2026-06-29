@@ -273,6 +273,45 @@ class TestStatsCollectorAccumulation(unittest.TestCase):
         stats.process_linter(linter)
         self.assertNotIn("vary", stats.to_dict())
 
+    def test_cache_control_composition_collected(self) -> None:
+        # The kitchen-sink recipe twice on a.example (different max-age values
+        # collapse to one recipe); public,max-age on b.example; no CC elsewhere.
+        stats = StatsCollector()
+        for url, cc in [
+            ("http://a.example/1", b"no-store, no-cache, max-age=0, private"),
+            ("http://a.example/2", b"private, max-age=60, no-cache, no-store"),
+            ("http://b.example/", b"public, max-age=3600"),
+            ("http://d.example/", None),
+        ]:
+            linter = _linter_for(url)
+            linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+            headers = [(b"cache-control", cc)] if cc is not None else []
+            linter.process_headers(headers)
+            linter.finish_content(True)
+            stats.process_linter(linter)
+        data = stats.to_dict()
+        self.assertIn("cache_control", data)
+        cc = data["cache_control"]
+        self.assertEqual(cc["responses_with_cc"], 3)
+        # Values collapse to =N, so both a.example responses share one recipe.
+        self.assertEqual(
+            cc["recipes"]["occ"]["max-age=N, no-cache, no-store, private"], 2
+        )
+        self.assertEqual(cc["recipes"]["occ"]["max-age=N, public"], 1)
+        # Marginals count each directive once per response.
+        self.assertEqual(cc["marginals"]["occ"]["max-age"], 3)
+        self.assertEqual(cc["marginals"]["occ"]["no-store"], 2)
+        self.assertEqual(cc["marginals"]["occ"]["public"], 1)
+
+    def test_no_cache_control_key_when_absent(self) -> None:
+        stats = StatsCollector()
+        linter = _linter_for("http://nothing.example/")
+        linter.process_response_topline(b"HTTP/1.1", b"200", b"OK")
+        linter.process_headers([(b"content-type", b"text/html")])
+        linter.finish_content(True)
+        stats.process_linter(linter)
+        self.assertNotIn("cache_control", stats.to_dict())
+
     def test_structured_field_parse_error_populates_field_error(self) -> None:
         # A malformed structured-field header fires STRUCTURED_FIELD_PARSE_ERROR,
         # whose vars are field_name/problem/context (not `error`). The derived
