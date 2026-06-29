@@ -89,34 +89,35 @@ VARS_TO_TRACK = {
     "FIELD_TOO_LARGE": ["field_name", "field_size_bucket"],
 }
 
-SAMPLES_TO_COLLECT = {
-    "BAD_SYNTAX": {
-        "field_name": [
-            "link",
-            "via",
-            "strict-transport-security",
-            "clear-site-data",
-            "content-md5",
-            "location",
-            "warning",
-            "content-range",
-        ]
-    },
-    "BAD_SYNTAX_DETAILED": {
-        "field_name": [
-            "link",
-            "via",
-            "strict-transport-security",
-            "clear-site-data",
-            "content-md5",
-            "location",
-            "warning",
-            "content-range",
-        ]
-    },
-    "VARY_COMPLEX": {"vary_count": ["6", "7", "8", "9", "10", "11", "12", "27"]},
-    "STRUCTURED_FIELD_PARSE_ERROR": {"field_error": ["*"]},
+# Every note whose breakdown is keyed on field_name gets per-field sample URLs
+# with the offending header value(s) captured, wildcarded over field names.
+# Derived from VARS_TO_TRACK so the two can't drift. A wildcard is safe for
+# field_name because the key space (header names) is bounded and the retained
+# set is further capped by VAR_SAMPLE_LIMIT (per value) and TOP_K_VAR_VALUES
+# (per var); only field_name samples capture the on-the-wire value, since
+# create_sample reads field_values from the matching header. High-cardinality
+# value dimensions (field_error, attribute, directive_conflicts) are left
+# unsampled to bound the cross-reducer shuffle. See issue #1.
+SAMPLES_TO_COLLECT: Dict[str, Dict[str, List[str]]] = {
+    note_id: {"field_name": ["*"]}
+    for note_id, tracked_vars in VARS_TO_TRACK.items()
+    if "field_name" in tracked_vars
 }
+# Bounded, hand-picked value sets stay explicit.
+SAMPLES_TO_COLLECT["VARY_COMPLEX"] = {
+    "vary_count": ["6", "7", "8", "9", "10", "11", "12", "27"]
+}
+
+# Cap each captured header value so a single pathological header can't bloat
+# the report or the shuffle. Applied per value, before repr().
+MAX_FIELD_VALUE_LEN = 300
+
+# Distinct sites retained per (var, value) sample bucket. The collection side
+# (StatsCollector._collect_samples) and the reducer-side merge
+# (cc_lint.emr.job._merge_var_samples) must use the same cap, so it lives here
+# -- the single source of truth -- and job.py imports it. It can't live in
+# job.py because job.py imports stats, not the reverse.
+VAR_SAMPLE_LIMIT = 15
 
 
 def _bucket_var(note: Note, source_var: str, bucketer: Any) -> Optional[str]:
@@ -177,7 +178,13 @@ def create_sample(
 ) -> Optional[SampleType]:
     """
     Helper to create a sample dictionary from a note.
-    Captures header values if var_name/val_str are provided and match logic.
+
+    For the note-level samples pool (``var_name`` unset) the full note-vars
+    dump is carried, since :func:`cc_lint.report.sections._sample_li` renders
+    it. For per-(var, val) samples (``var_name``/``val_str`` set) only the
+    payload the report actually reads is carried -- the on-the-wire header
+    value(s) for ``field_name`` samples -- so the discarded note-attribute dump
+    doesn't ride the mapper->reducer shuffle for every retained sample.
     """
     sample_url = getattr(linter, "base_uri", None)
     if not sample_url:
@@ -186,27 +193,29 @@ def create_sample(
     if site is None:
         return None
 
-    note_vars = {}
-    filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
-    for key, val in vars(note).items():
-        if key not in filtered_keys:
-            note_vars[key] = str(val)
-    for key, val in note.vars.items():
-        if key not in filtered_keys:
-            note_vars[key] = str(val)
-
+    note_vars: Dict[str, str] = {}
     if var_name and val_str:
-        # Capture header values for context
         if var_name == "field_name":
+            # Capture the offending header value(s) for context.
             target_field_name = val_str.lower()
             values = []
             for h_name, h_val in linter.headers.text:
                 h_name_str = str(h_name)
                 if h_name_str.lower() == target_field_name:
                     h_val_str = str(h_val)
+                    if len(h_val_str) > MAX_FIELD_VALUE_LEN:
+                        h_val_str = h_val_str[:MAX_FIELD_VALUE_LEN] + "…[truncated]"
                     values.append(h_val_str)
             if values:
                 note_vars["field_values"] = repr(values)
+    else:
+        filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
+        for key, val in vars(note).items():
+            if key not in filtered_keys:
+                note_vars[key] = str(val)
+        for key, val in note.vars.items():
+            if key not in filtered_keys:
+                note_vars[key] = str(val)
 
     return {"url": sample_url, "vars": note_vars, "site": site}
 
@@ -372,7 +381,7 @@ class StatsCollector:
                 self.note_data[note_id]["var_samples"][var_name][val_str] = []
 
             current_samples = self.note_data[note_id]["var_samples"][var_name][val_str]
-            if len(current_samples) >= 15:
+            if len(current_samples) >= VAR_SAMPLE_LIMIT:
                 continue
             if sample_site not in {s.get("site") for s in current_samples}:
                 current_samples.append(sample)
