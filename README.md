@@ -92,6 +92,22 @@ cluster terminated in the EMR console after a run.
    make tranco-cache
    ```
 
+5. *(Optional)* Build the IP-to-ASN table for infrastructure
+   fingerprinting. Every report fingerprints the CDN / server /
+   framework behind each response from signal headers; supplying a
+   CAIDA pfx2as snapshot additionally resolves the crawl-time
+   `WARC-IP-Address` to an ASN, which catches CDNs that strip
+   identifying headers. Set `IPASN_V4_URL` (and optionally
+   `IPASN_V6_URL`) in your config to a snapshot near the crawl month,
+   then:
+
+   ```bash
+   make ipasn-cache
+   ```
+
+   Once built, the table is shipped to mappers (and used by the local
+   lint) automatically. Without it, fingerprinting is header-only.
+
 ### Smoke test
 
 `make test-emr` runs the full pipeline against

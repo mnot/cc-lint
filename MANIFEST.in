@@ -1,1 +1,2 @@
 include cc_lint/py.typed
+include cc_lint/fingerprints.toml

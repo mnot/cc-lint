@@ -19,7 +19,8 @@ dependencies = [
     "boto3",
     "click",
     "requests",
-    "python-dateutil"
+    "python-dateutil",
+    "tomli; python_version < '3.11'"
 ]
 
 [project.optional-dependencies]
@@ -66,7 +67,7 @@ where = ["."]
 include-package-data = true
 
 [tool.setuptools.package-data]
-cc_lint = ["py.typed"]
+cc_lint = ["py.typed", "fingerprints.toml"]
 
 [tool.mypy]
 strict = true

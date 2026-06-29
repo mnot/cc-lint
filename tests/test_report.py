@@ -72,6 +72,44 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("<!doctype html>", html)
         self.assertIn("Responses analyzed", html)
 
+    def test_infra_section(self) -> None:
+        data = {
+            "total_responses": 100,
+            "notes": {
+                "FIELD_DEPRECATED": {
+                    "count": 30,
+                    "samples": [],
+                    "vars": {},
+                    "by_layer": {"cloudflare": 20, "nginx": 10},
+                }
+            },
+            "field_counts": {"server": 100, "x-xss-protection": 30},
+            "layer_counts": {"cloudflare": 60, "nginx": 25, "__unmatched__": 15},
+            "field_counts_by_layer": {
+                "x-xss-protection": {"cloudflare": 20, "nginx": 10},
+                "server": {"cloudflare": 60, "nginx": 25},
+            },
+            "asn_counts": {"13335": 50, "16509": 20},
+        }
+        html, md = self._render_both(data)
+        # Section + coverage line + a layer row + role label.
+        self.assertIn('id="infrastructure"', html)
+        self.assertIn("Fingerprinted 85.0% of responses", html)
+        self.assertIn("cloudflare", html)
+        self.assertIn("Headers by infrastructure", html)
+        # Per-note breakdown rendered on the note card.
+        self.assertIn("By infrastructure", html)
+        # Top-ASN section: AS number plus the known-vendor label.
+        self.assertIn('id="asn"', html)
+        self.assertIn("AS13335", html)
+        self.assertIn("Top networks (ASN)", html)
+        # Markdown parity.
+        self.assertIn("## Infrastructure", md)
+        self.assertIn("matched no known layer", md)
+        self.assertIn("By infrastructure:", md)
+        self.assertIn("## Top networks (ASN)", md)
+        self.assertIn("AS13335", md)
+
     def test_unseen_notes_bucketed(self) -> None:
         html = self._render(SAMPLE_STATS)
         # The three subgroup headings should be present (each one is a
