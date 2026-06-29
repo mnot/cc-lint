@@ -405,6 +405,44 @@ class TestRenderer(unittest.TestCase):
         html = self._render({"total_responses": 5, "notes": {}})
         self.assertNotIn('id="vary"', html)
 
+    def test_cooccur_section_rendered(self) -> None:
+        bundle = "strict-transport-security, x-content-type-options"
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "cooccur": {
+                "responses": 100,
+                "bundles": {
+                    "occ": {bundle: 60, "(none)": 30, "x-content-type-options": 10},
+                    "hlls": {},
+                },
+                "marginals": {
+                    "occ": {
+                        "strict-transport-security": 60,
+                        "x-content-type-options": 70,
+                    },
+                    "hlls": {},
+                },
+                "pairs": {"occ": {bundle: 60}, "hlls": {}},
+                "by_layer": {bundle: {"cloudflare": 60}, "(none)": {"nginx": 30}},
+            },
+        }
+        html, md = self._render_both(data)
+        self.assertIn('id="cooccur"', html)
+        self.assertIn("Header co-occurrence", html)
+        self.assertIn("## Header co-occurrence", md)
+        # The no-security-headers headline and the modal-by-layer view appear.
+        self.assertIn("no</strong> security header", html)
+        self.assertIn("Default header set by infrastructure", html)
+        self.assertIn("Default header set by infrastructure", md)
+        # The conditional-lift table surfaces the bundled pair in both.
+        self.assertIn("Conditional lifts", html)
+        self.assertIn("strict-transport-security", md)
+
+    def test_no_cooccur_section_absent(self) -> None:
+        html = self._render({"total_responses": 5, "notes": {}})
+        self.assertNotIn('id="cooccur"', html)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,

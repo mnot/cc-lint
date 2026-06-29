@@ -32,7 +32,12 @@ import importlib
 import pkgutil
 from typing import Any, Dict, List
 
-from cc_lint.recipes import merge_recipe_dict, trim_recipe_dict
+from cc_lint.recipes import (
+    merge_recipe_dict,
+    recipe_key,
+    recipe_tokens,
+    trim_recipe_dict,
+)
 
 # The wildcard token is the cache opt-out, not a field-name. It is kept in
 # the recipe string (so "*" shows up as its own recipe) but excluded from
@@ -51,8 +56,6 @@ HIGH_INTEREST_AXES = ["cookie", "accept-language", "accept-encoding", "user-agen
 # after that token is factored out. Not a real token, so renderers treat it
 # as a plain label rather than a (mis-classified) synthetic token.
 AE_ONLY_LABEL = "(accept-encoding only)"
-
-RECIPE_SEPARATOR = ", "
 
 
 def vary_tokens(linter: Any) -> List[str]:
@@ -78,18 +81,6 @@ def vary_tokens(linter: Any) -> List[str]:
         if token_str:
             tokens.append(token_str)
     return tokens
-
-
-def recipe_key(tokens: List[str]) -> str:
-    """Canonical recipe string: deduped, sorted, ``", "``-joined."""
-    return RECIPE_SEPARATOR.join(sorted(set(tokens)))
-
-
-def recipe_tokens(recipe: str) -> List[str]:
-    """Split a canonical recipe string back into its tokens."""
-    if not recipe:
-        return []
-    return recipe.split(RECIPE_SEPARATOR)
 
 
 # ---- token classification --------------------------------------------------

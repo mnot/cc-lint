@@ -29,6 +29,7 @@ from mrjob.job import MRJob  # type: ignore[import-untyped]
 from mrjob.protocol import JSONProtocol  # type: ignore[import-untyped]
 
 import cc_lint
+from cc_lint.cooccur import merge_cooccur, trim_cooccur
 from cc_lint.emr.warc_worker import (
     WarcWorkerResult,
     load_warc_worker_result,
@@ -229,6 +230,9 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
         merge_value_histograms(
             target.setdefault("value_histograms", {}), src_value_histograms
         )
+    src_cooccur = source.get("cooccur")
+    if src_cooccur:
+        merge_cooccur(target.setdefault("cooccur", {}), src_cooccur)
 
 
 GLOBALS_KEY = "globals"
@@ -236,6 +240,7 @@ NOTE_KEY_PREFIX = "note:"
 CSP_SIZES_KEY = "csp_sizes"
 VARY_KEY = "vary"
 VALUE_HISTOGRAMS_KEY = "value_histograms"
+COOCCUR_KEY = "cooccur"
 
 # Defensive cap on the per-site CSP-size dict. The dict naturally bounds at
 # the cardinality of distinct sites the mapper saw (~ TOP_N in practice),
@@ -413,6 +418,8 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
             stats["truncated_asn_counts"] = True
     if stats.get("vary"):
         trim_vary(stats["vary"], TOP_K_RECIPES)
+    if stats.get("cooccur"):
+        trim_cooccur(stats["cooccur"], TOP_K_RECIPES)
     for note in stats.get("notes", {}).values():
         var_counts = note.get("vars", {})
         retained_vals_per_var: Dict[str, set[str]] = {}
@@ -720,6 +727,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         value_histograms = stats.get("value_histograms") or {}
         if value_histograms:
             yield VALUE_HISTOGRAMS_KEY, value_histograms
+        cooccur = stats.get("cooccur") or {}
+        if cooccur:
+            yield COOCCUR_KEY, cooccur
 
     # No combiner: mapper_final emits each (key, value) exactly once per
     # mapper, so there is nothing for a combiner to fold. The mrjob default
@@ -754,6 +764,12 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             for value in values:
                 merge_value_histograms(merged_histograms, value)
             yield VALUE_HISTOGRAMS_KEY, merged_histograms
+        elif key == COOCCUR_KEY:
+            merged_cooccur: Dict[str, Any] = {}
+            for value in values:
+                merge_cooccur(merged_cooccur, value)
+            trim_cooccur(merged_cooccur, TOP_K_RECIPES)
+            yield COOCCUR_KEY, merged_cooccur
 
 
 def main() -> None:

@@ -131,6 +131,13 @@ class TestMergeStatsDict(unittest.TestCase):
                     "recipes": {"occ": {"accept-encoding": 4}, "hlls": {}},
                     "marginals": {"occ": {"accept-encoding": 4}, "hlls": {}},
                 },
+                "cooccur": {
+                    "responses": 50,
+                    "bundles": {"occ": {"(none)": 40, "x-frame-options": 10}},
+                    "marginals": {"occ": {"x-frame-options": 10}},
+                    "pairs": {"occ": {}},
+                    "by_layer": {"x-frame-options": {"cloudflare": 10}},
+                },
             },
         )
         merge_stats_dict(
@@ -154,6 +161,13 @@ class TestMergeStatsDict(unittest.TestCase):
                         "occ": {"accept-encoding": 1, "cookie": 1},
                         "hlls": {},
                     },
+                },
+                "cooccur": {
+                    "responses": 30,
+                    "bundles": {"occ": {"(none)": 20, "x-frame-options": 10}},
+                    "marginals": {"occ": {"x-frame-options": 10}},
+                    "pairs": {"occ": {}},
+                    "by_layer": {"x-frame-options": {"cloudflare": 5, "nginx": 5}},
                 },
             },
         )
@@ -192,6 +206,18 @@ class TestMergeStatsDict(unittest.TestCase):
                 "age": {"1-10 min": 5, "0": 1},
                 "hsts_max_age": {"1-10 years": 4},
             },
+        )
+        # cooccur block survives: responses sum, bundle/marginal occ merge, and
+        # by_layer (bundle -> layer -> count) merges across both folds.
+        self.assertEqual(target["cooccur"]["responses"], 80)
+        self.assertEqual(
+            target["cooccur"]["bundles"]["occ"],
+            {"(none)": 60, "x-frame-options": 20},
+        )
+        self.assertEqual(target["cooccur"]["marginals"]["occ"], {"x-frame-options": 20})
+        self.assertEqual(
+            target["cooccur"]["by_layer"]["x-frame-options"],
+            {"cloudflare": 15, "nginx": 5},
         )
 
 

@@ -16,6 +16,7 @@ from cc_lint.report.sections import (
     count_total_notes,
     render_asn_section,
     render_category_overview,
+    render_cooccur_section,
     render_csp_section,
     render_field_counts_section,
     render_header_stats,
@@ -65,6 +66,7 @@ def _build_html(data: Dict[str, Any]) -> str:
     csp_sizes = data.get("csp_max_by_site") or {}
     severity_counts = data.get("severity_counts") or {}
     vary = data.get("vary") or {}
+    cooccur = data.get("cooccur") or {}
 
     layer_counts: Dict[str, int] = data.get("layer_counts") or {}
     field_counts_by_layer: Dict[str, Dict[str, int]] = (
@@ -117,6 +119,7 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_csp_section(csp_sizes),
         render_value_histograms_section(data.get("value_histograms") or {}),
         render_vary_section(vary),
+        render_cooccur_section(cooccur, layer_roles),
         render_unprocessed_section(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         ),

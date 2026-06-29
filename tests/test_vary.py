@@ -6,7 +6,7 @@ from typing import Any, Dict
 from httplint.message import HttpResponseLinter
 
 from cc_lint.hll import hll_estimate
-from cc_lint.recipes import RecipeStats
+from cc_lint.recipes import RecipeStats, recipe_key, recipe_tokens
 from cc_lint.vary import (
     ACCEPT_ENCODING,
     AE_ONLY_LABEL,
@@ -15,8 +15,6 @@ from cc_lint.vary import (
     is_nonstandard_token,
     is_registered_field,
     merge_vary,
-    recipe_key,
-    recipe_tokens,
     trim_vary,
     vary_tokens,
 )
