@@ -265,7 +265,7 @@ def _render_note_block(
         bits = []
         for layer, fired in ordered:
             layer_share = f"{fired / count * 100:.0f}%" if count else "—"
-            bits.append(f"{layer} ({layer_share})")
+            bits.append(f"{layer} ({_fmt_count(fired)}, {layer_share})")
         lines.append("By infrastructure: " + ", ".join(bits))
         lines.append("")
     return lines
@@ -574,6 +574,7 @@ def _render_infrastructure(
     field_counts_by_layer: Dict[str, Dict[str, int]],
     field_counts: Dict[str, int],
     total_responses: int,
+    truncated: bool = False,
 ) -> List[str]:
     if not layer_counts:
         return []
@@ -634,6 +635,9 @@ def _render_infrastructure(
                 "(layers overlap)."
             )
             lines.append("")
+            if truncated:
+                lines.append("_Long tail elided during shuffle; head only._")
+                lines.append("")
             lines.append("| Header | Layers (share of occurrences) |")
             lines.append("| --- | --- |")
             lines.extend(body)
@@ -641,7 +645,9 @@ def _render_infrastructure(
     return lines
 
 
-def _render_asn(asn_counts: Dict[str, int], total_responses: int) -> List[str]:
+def _render_asn(
+    asn_counts: Dict[str, int], total_responses: int, truncated: bool = False
+) -> List[str]:
     if not asn_counts:
         return []
     try:
@@ -655,9 +661,12 @@ def _render_asn(asn_counts: Dict[str, int], total_responses: int) -> List[str]:
         "Autonomous System the crawl-time IP resolved to, by response count. "
         "Networks without a layer label are not yet in the fingerprint table.",
         "",
-        "| ASN | Layer | Responses | % of responses |",
-        "| --- | --- | --- | --- |",
     ]
+    if truncated:
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    lines.append("| ASN | Layer | Responses | % of responses |")
+    lines.append("| --- | --- | --- | --- |")
     for asn_str, count in ranked:
         try:
             label = asn_to_layer.get(int(asn_str), "")
@@ -844,9 +853,16 @@ def render_markdown(data: Dict[str, Any]) -> str:
             data.get("field_counts_by_layer") or {},
             field_counts,
             total_responses,
+            bool(data.get("truncated_field_counts_by_layer")),
         )
     )
-    lines.extend(_render_asn(data.get("asn_counts") or {}, total_responses))
+    lines.extend(
+        _render_asn(
+            data.get("asn_counts") or {},
+            total_responses,
+            bool(data.get("truncated_asn_counts")),
+        )
+    )
     lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
     lines.extend(_render_vary_section(data.get("vary") or {}))
     lines.extend(

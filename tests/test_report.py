@@ -111,6 +111,25 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("## Top networks (ASN)", md)
         self.assertIn("AS13335", md)
 
+    def test_infra_truncation_notes_sync(self) -> None:
+        # When the per-layer / ASN tables were trimmed during shuffle, BOTH
+        # the HTML and Markdown reports must footnote the elision (CLAUDE.md
+        # HTML/Markdown sync rule).
+        data = {
+            "total_responses": 100,
+            "notes": {},
+            "field_counts": {"server": 100},
+            "layer_counts": {"cloudflare": 60, "__unmatched__": 40},
+            "field_counts_by_layer": {"server": {"cloudflare": 60}},
+            "asn_counts": {"13335": 60},
+            "truncated_field_counts_by_layer": True,
+            "truncated_asn_counts": True,
+        }
+        html, md = self._render_both(data)
+        # HTML uses the shared TRUNCATED_NOTE; Markdown its elision line.
+        self.assertIn("long tail", html.lower())
+        self.assertEqual(md.lower().count("long tail elided"), 2)
+
     def test_unseen_notes_bucketed(self) -> None:
         html = self._render(SAMPLE_STATS)
         # The three subgroup headings should be present (each one is a

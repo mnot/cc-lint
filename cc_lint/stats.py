@@ -323,7 +323,13 @@ class StatsCollector:
         # Fingerprint the response once, up front, so the layer set can be
         # attributed to every note and header below. The layer set unions
         # header signals with an optional ASN match from the crawl-time IP.
-        layers, asn = self._fingerprint(linter)
+        # Materialize the header list once: it feeds fingerprint matching here
+        # and field counting in _process_headers, so we avoid a second walk of
+        # linter.headers.text on the per-response hot path.
+        header_items = [
+            (str(name).lower(), value) for name, value in linter.headers.text
+        ]
+        layers, asn = self._fingerprint(header_items, linter)
         if asn is not None:
             self.asn_counts[str(asn)] += 1
         if layers:
@@ -348,16 +354,22 @@ class StatsCollector:
             self._process_note(note, linter, site, layers)
 
         self.severity_counts[max_severity or "clean"] += 1
-        self._process_headers(linter, site, layers)
+        self._process_headers(header_items, linter, site, layers)
         self._process_vary(linter, site)
 
     def _fingerprint(
-        self, linter: HttpResponseLinter
+        self,
+        header_items: List[tuple[str, Any]],
+        linter: HttpResponseLinter,
     ) -> tuple[Set[str], Optional[int]]:
-        """Return (matched layer ids, resolved ASN or None) for a response."""
+        """Return (matched layer ids, resolved ASN or None) for a response.
+
+        ``header_items`` is the pre-lowercased (name, value) list shared with
+        :meth:`_process_headers` so headers are walked once per response.
+        """
         header_map: Dict[str, List[str]] = {}
-        for name, value in linter.headers.text:
-            header_map.setdefault(str(name).lower(), []).append(str(value))
+        for name_lower, value in header_items:
+            header_map.setdefault(name_lower, []).append(str(value))
         asn: Optional[int] = None
         if self.ipasn is not None:
             ip_address = getattr(linter, "ip_address", None)
@@ -497,13 +509,17 @@ class StatsCollector:
             self.note_data[note_id]["samples"].append(sample)
 
     def _process_headers(
-        self, linter: HttpResponseLinter, site: Optional[str], layers: Set[str]
+        self,
+        header_items: List[tuple[str, Any]],
+        linter: HttpResponseLinter,
+        site: Optional[str],
+        layers: Set[str],
     ) -> None:
-        # Count fields (case-insensitive); decode names if they are bytes.
+        # Count fields (case-insensitive). ``header_items`` is the (lowercased
+        # name, raw value) list already materialized in process_linter.
         # Capture CSP byte size for the per-site histogram while we iterate.
         csp_bytes = 0
-        for name, value in linter.headers.text:
-            name_lower = str(name).lower()
+        for name_lower, value in header_items:
             self.field_counts[name_lower] += 1
             if layers:
                 per_layer = self.field_counts_by_layer.setdefault(
