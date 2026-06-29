@@ -1,12 +1,21 @@
 """Tiny HyperLogLog used to estimate distinct-site counts.
 
-Two precisions are used in cc-lint:
+Three precisions are used in cc-lint:
 
 - ``HLL_P_GLOBAL`` (12) for the crawl-wide site count; ~1.6% error,
   ~4 KB of register state.
 - ``HLL_P_PER_NOTE`` (8) for per-note "seen on N sites"; ~6.5% error,
   ~256 bytes of register state. With ~200 active notes across 1600
   mappers that's ~320 MB shuffle, well within budget.
+- ``HLL_P_RECIPE`` (6) for the per-value (per-recipe) "seen on N sites"
+  HLLs in the Vary breakdown; ~13% error, ~64 bytes of register state.
+  Per-value HLLs multiply by tracked-value cardinality (up to
+  ``TOP_K_RECIPES`` distinct recipes per mapper), so they use the
+  coarsest precision -- a recipe's per-site count is a ranking signal,
+  not a headline number, and 1/4 the register state keeps the shuffle in
+  budget. Per-field *marginal* HLLs stay at ``HLL_P_PER_NOTE``: their key
+  space is bounded (a few hundred field-names) and they carry the
+  headline axes (Cookie / Accept-Language / …) where accuracy matters.
 
 Registers serialize as a plain ``List[int]`` so they round-trip through
 the mrjob JSONProtocol shuffle.
@@ -22,6 +31,7 @@ from typing import List
 
 HLL_P_GLOBAL = 12
 HLL_P_PER_NOTE = 8
+HLL_P_RECIPE = 6
 
 
 def make_registers(precision: int) -> List[int]:

@@ -35,7 +35,7 @@ from cc_lint.emr.warc_worker import (
     process_warc_to_file,
 )
 from cc_lint.hll import hll_merge
-from cc_lint.stats import StatsCollector, VAR_SAMPLE_LIMIT
+from cc_lint.stats import VAR_SAMPLE_LIMIT, StatsCollector
 from cc_lint.top_sites import load_top_sites
 from cc_lint.vary import merge_vary, trim_vary
 

@@ -82,7 +82,7 @@ def _build_html(data: Dict[str, Any]) -> str:
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
         ),
         render_csp_section(csp_sizes),
-        render_vary_section(vary, distinct_sites_estimate),
+        render_vary_section(vary),
         render_unprocessed_section(
             unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
         ),

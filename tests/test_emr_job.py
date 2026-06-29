@@ -105,8 +105,8 @@ class TestMergeStatsDict(unittest.TestCase):
         # Regression: merge_stats_dict has to cover every key that
         # StatsCollector.to_dict() emits. Dropping any field silently
         # discards data when the EMR mapper folds per-WARC worker output
-        # into its running stats. Verify sites_hll, severity_counts, and
-        # csp_max_by_site all survive the merge.
+        # into its running stats. Verify sites_hll, severity_counts,
+        # csp_max_by_site, and vary all survive the merge.
         first_hll = make_registers(HLL_P_GLOBAL)
         second_hll = make_registers(HLL_P_GLOBAL)
         hll_add(first_hll, HLL_P_GLOBAL, "a.example")
@@ -123,6 +123,11 @@ class TestMergeStatsDict(unittest.TestCase):
                 "sites_hll": first_hll,
                 "csp_max_by_site": {"a.example": 100},
                 "severity_counts": {"warn": 30, "clean": 20},
+                "vary": {
+                    "responses_with_vary": 4,
+                    "recipes": {"occ": {"accept-encoding": 4}, "hlls": {}},
+                    "marginals": {"occ": {"accept-encoding": 4}, "hlls": {}},
+                },
             },
         )
         merge_stats_dict(
@@ -135,6 +140,14 @@ class TestMergeStatsDict(unittest.TestCase):
                 "sites_hll": second_hll,
                 "csp_max_by_site": {"a.example": 500, "b.example": 200},
                 "severity_counts": {"warn": 10, "info": 15, "clean": 5},
+                "vary": {
+                    "responses_with_vary": 2,
+                    "recipes": {"occ": {"accept-encoding": 1, "cookie": 1}, "hlls": {}},
+                    "marginals": {
+                        "occ": {"accept-encoding": 1, "cookie": 1},
+                        "hlls": {},
+                    },
+                },
             },
         )
         self.assertEqual(target["total_responses"], 80)
@@ -153,6 +166,17 @@ class TestMergeStatsDict(unittest.TestCase):
         # distinct sites in the merged register state.
         self.assertIn("sites_hll", target)
         self.assertGreaterEqual(sum(1 for r in target["sites_hll"] if r > 0), 1)
+        # Vary block survives: responses_with_vary sums and recipe/marginal
+        # occurrence counts merge across the two folds.
+        self.assertEqual(target["vary"]["responses_with_vary"], 6)
+        self.assertEqual(
+            target["vary"]["recipes"]["occ"],
+            {"accept-encoding": 5, "cookie": 1},
+        )
+        self.assertEqual(
+            target["vary"]["marginals"]["occ"],
+            {"accept-encoding": 5, "cookie": 1},
+        )
 
 
 class TestMergeGlobalsHLLAndFlags(unittest.TestCase):

@@ -34,9 +34,19 @@ from cc_lint.hll import HLL_P_PER_NOTE, hll_add, hll_merge, make_registers
 
 
 class RecipeStats:
-    """Accumulate per-recipe occurrence counts and per-site HLLs."""
+    """Accumulate per-recipe occurrence counts and per-site HLLs.
 
-    def __init__(self) -> None:
+    ``precision`` is the HLL register precision for the per-value site
+    HLLs. It is caller-chosen because per-value HLLs multiply by value
+    cardinality, so a high-cardinality structure (recipes) should use a
+    coarser precision to stay within the shuffle budget while a bounded,
+    headline-bearing one (field marginals) can afford the default. The
+    merge/trim helpers don't need it -- ``hll_merge``/``hll_estimate``
+    infer width from the register list -- so only ``add`` carries it.
+    """
+
+    def __init__(self, precision: int = HLL_P_PER_NOTE) -> None:
+        self.precision = precision
         self.occ: Counter[str] = Counter()
         self.hlls: Dict[str, List[int]] = {}
 
@@ -47,9 +57,9 @@ class RecipeStats:
         if site:
             registers = self.hlls.get(recipe)
             if registers is None:
-                registers = make_registers(HLL_P_PER_NOTE)
+                registers = make_registers(self.precision)
                 self.hlls[recipe] = registers
-            hll_add(registers, HLL_P_PER_NOTE, site)
+            hll_add(registers, self.precision, site)
 
     def to_dict(self) -> Dict[str, Any]:
         return {"occ": dict(self.occ), "hlls": self.hlls}

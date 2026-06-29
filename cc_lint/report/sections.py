@@ -81,9 +81,7 @@ def _sample_li_html(url: str, trailing_html: str) -> str:
 
 
 def _sample_li(sample: Dict[str, Any]) -> str:
-    return _sample_li_html(
-        sample.get("url", ""), _format_vars(sample.get("vars", {}))
-    )
+    return _sample_li_html(sample.get("url", ""), _format_vars(sample.get("vars", {})))
 
 
 def _field_sample_li(sample: Dict[str, Any]) -> str:
@@ -869,16 +867,8 @@ def _render_marginal_table(
     )
 
 
-def render_vary_section(
-    vary: Dict[str, Any], distinct_sites_estimate: Optional[int] = None
-) -> str:
-    """Render the Vary composition section (issue #3).
-
-    ``distinct_sites_estimate`` is accepted for signature parity with the
-    other site-aware sections; per-recipe site counts come from the recipe
-    HLLs, so it is currently unused here.
-    """
-    del distinct_sites_estimate  # reserved for future per-recipe share %
+def render_vary_section(vary: Dict[str, Any]) -> str:
+    """Render the Vary composition section (issue #3)."""
     if not vary:
         return ""
     denom = int(vary.get("responses_with_vary", 0))
@@ -890,20 +880,19 @@ def render_vary_section(
     marg_hlls: Dict[str, Any] = marginals.get("hlls", {})
 
     blocks: List[str] = [
-        '<p class="muted">Composition of the <code>Vary</code> header across '
-        f"the {_format_count(denom)} responses that carried one. A "
-        "<strong>recipe</strong> is the full lowercased, deduped, sorted set "
-        "of field-names in a response's <code>Vary</code> &mdash; the unit "
-        "where synthetic cache-key engineering shows up. <em>Responses</em> "
-        "is occurrence-weighted (one CDN-configured origin can emit the same "
-        "recipe across millions of responses); <em>Sites</em> is a "
-        "HyperLogLog estimate of distinct operators, the per-site view.</p>",
+        '<p class="muted">Composition of <code>Vary</code> across the '
+        f"{_format_count(denom)} responses that carried one. A "
+        "<strong>recipe</strong> is the lowercased, deduped, sorted set of "
+        "field-names in a response's <code>Vary</code> &mdash; where "
+        "synthetic cache-key engineering shows up. <em>Responses</em> is "
+        "occurrence-weighted (one CDN origin can emit a recipe across "
+        "millions of responses); <em>Sites</em> is a HyperLogLog estimate of "
+        "distinct operators.</p>",
         "<h3>Top Vary recipes</h3>",
     ]
     if vary.get("recipes_truncated"):
         blocks.append(TRUNCATED_NOTE)
     blocks.append(_render_recipe_table(recipes, denom))
-
     blocks.append("<h3>Top Vary recipes (Accept-Encoding factored out)</h3>")
     blocks.append(
         '<p class="muted"><code>Accept-Encoding</code> appears in the large '
@@ -913,18 +902,15 @@ def render_vary_section(
     )
     factored = factor_out(recipes, ACCEPT_ENCODING, AE_ONLY_LABEL)
     blocks.append(_render_recipe_table(factored, denom))
-
-    blocks.append("<h3>High-interest axes</h3>")
     blocks.append(
-        '<p class="muted">Prevalence of the axes called out in the cache-key '
-        "/ availability work, as a share of responses carrying "
-        "<code>Vary</code>.</p>"
+        "<h3>High-interest axes</h3>"
+        '<p class="muted">Prevalence of the cache-key / availability axes, as '
+        "a share of responses carrying <code>Vary</code>.</p>"
     )
     axes_entries = [(axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES]
     blocks.append(
         _render_marginal_table(axes_entries, marg_hlls, denom, show_registered=False)
     )
-
     blocks.append("<h3>Vary field-names (marginals)</h3>")
     if vary.get("marginals_truncated"):
         blocks.append(TRUNCATED_NOTE)
@@ -932,17 +918,14 @@ def render_vary_section(
     blocks.append(
         _render_marginal_table(top_marginals, marg_hlls, denom, show_registered=True)
     )
-
-    blocks.append("<h3>Non-standard Vary tokens</h3>")
     blocks.append(
+        "<h3>Non-standard Vary tokens</h3>"
         '<p class="muted">Tokens httplint\'s field registry does not '
-        "recognise (≈ not IANA-registered), which approximates the synthetic "
-        "cache-key population &mdash; sites injecting their own request "
-        "headers at the edge and varying on them. This is a <strong>lower "
-        "bound</strong> on the pattern: some synthetic schemes are consumed "
-        "entirely at the edge and never appear in <code>Vary</code>, and the "
-        "classification is approximate (a real request header httplint lacks "
-        "a parser for would also land here).</p>"
+        "recognise (≈ not IANA-registered), approximating the synthetic "
+        "cache-key population. A <strong>lower bound</strong>: some schemes "
+        "are consumed at the edge and never appear in <code>Vary</code>, and "
+        "the classification is approximate (a real request header httplint "
+        "lacks a parser for also lands here).</p>"
     )
     nonstandard = sorted(
         ((t, c) for t, c in marg_occ.items() if is_nonstandard_token(t)),

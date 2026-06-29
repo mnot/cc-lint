@@ -30,6 +30,7 @@ from cc_lint.vary import (
     factor_out,
     is_nonstandard_token,
     is_registered_field,
+    recipe_tokens,
 )
 
 _NOTE_SUMMARIES = build_summary_index()
@@ -485,6 +486,23 @@ def _vary_sites(hlls: Dict[str, Any], key: str) -> str:
     return "—"
 
 
+def _recipe_label_md(recipe: str) -> str:
+    """Recipe string with non-standard tokens bolded inline.
+
+    Mirrors the HTML renderer's ``vary-synthetic`` highlighting so both
+    views flag *which* tokens are synthetic, not just how many (the
+    aggregate count is the adjacent column). The AE-only placeholder is
+    not a token list, so it renders verbatim.
+    """
+    if recipe == AE_ONLY_LABEL:
+        return _md_escape_pipe(recipe)
+    parts = []
+    for token in recipe_tokens(recipe):
+        escaped = _md_escape_pipe(token)
+        parts.append(f"**{escaped}**" if is_nonstandard_token(token) else escaped)
+    return ", ".join(parts)
+
+
 def _render_recipe_md(recipe_dict: Dict[str, Any], denom: int) -> List[str]:
     occ: Dict[str, int] = recipe_dict.get("occ", {})
     hlls: Dict[str, Any] = recipe_dict.get("hlls", {})
@@ -498,7 +516,7 @@ def _render_recipe_md(recipe_dict: Dict[str, Any], denom: int) -> List[str]:
     for recipe, count in ordered[:25]:
         synth = 0 if recipe == AE_ONLY_LABEL else count_nonstandard(recipe)
         lines.append(
-            f"| {_md_escape_pipe(recipe)} | {_fmt_count(count)} | "
+            f"| {_recipe_label_md(recipe)} | {_fmt_count(count)} | "
             f"{_vary_pct(count, denom)} | {_vary_sites(hlls, recipe)} | "
             f"{_fmt_count(synth) if synth else '—'} |"
         )

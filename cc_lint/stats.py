@@ -9,6 +9,7 @@ from cc_lint.histograms import byte_bucket, duration_bucket
 from cc_lint.hll import (
     HLL_P_GLOBAL,
     HLL_P_PER_NOTE,
+    HLL_P_RECIPE,
     hll_add,
     make_registers,
 )
@@ -277,9 +278,13 @@ class StatsCollector:
         # Vary composition (issue #3). Recipes are the full sorted token-set
         # per response (the primary artifact); marginals are the per-field
         # rollup. Both carry occurrence + per-site HLL via RecipeStats.
+        # Recipes are high-cardinality (up to TOP_K_RECIPES per mapper), so
+        # their per-site HLLs use the coarse HLL_P_RECIPE precision to bound
+        # shuffle; marginals are bounded (a few hundred field-names) and
+        # carry the headline axes, so they keep the default HLL_P_PER_NOTE.
         self.responses_with_vary = 0
-        self.vary_recipes = RecipeStats()
-        self.vary_marginals = RecipeStats()
+        self.vary_recipes = RecipeStats(HLL_P_RECIPE)
+        self.vary_marginals = RecipeStats(HLL_P_PER_NOTE)
 
     def process_linter(self, linter: HttpResponseLinter) -> None:
         """
