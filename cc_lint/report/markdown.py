@@ -517,7 +517,7 @@ def _render_value_histograms(
         blocks.append("| --- | --- | --- |")
         for label in LIFETIME_BUCKET_ORDER:
             count = counts.get(label, 0)
-            pct = (count / total * 100) if total else 0
+            pct = count / total * 100  # total > 0: guarded above
             blocks.append(f"| {label} | {_fmt_count(count)} | {pct:.1f}% |")
         blocks.append("")
     if not blocks:

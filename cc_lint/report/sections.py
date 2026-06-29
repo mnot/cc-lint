@@ -803,7 +803,7 @@ def _render_value_histogram_table(heading: str, counts: Dict[str, int]) -> str:
     rows: List[str] = []
     for label in LIFETIME_BUCKET_ORDER:
         count = counts.get(label, 0)
-        pct = (count / total * 100) if total else 0
+        pct = count / total * 100  # total > 0: guarded above
         bar_width = int(pct * 2)  # 200px max
         rows.append(
             f"<tr>"
