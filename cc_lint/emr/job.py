@@ -29,6 +29,7 @@ from mrjob.job import MRJob  # type: ignore[import-untyped]
 from mrjob.protocol import JSONProtocol  # type: ignore[import-untyped]
 
 import cc_lint
+from cc_lint.cache_control import merge_cache_control, trim_cache_control
 from cc_lint.cooccur import merge_cooccur, trim_cooccur
 from cc_lint.emr.warc_worker import (
     WarcWorkerResult,
@@ -225,6 +226,9 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     src_vary = source.get("vary")
     if src_vary:
         merge_vary(target.setdefault("vary", {}), src_vary)
+    src_cc = source.get("cache_control")
+    if src_cc:
+        merge_cache_control(target.setdefault("cache_control", {}), src_cc)
     src_value_histograms = source.get("value_histograms")
     if src_value_histograms:
         merge_value_histograms(
@@ -239,6 +243,7 @@ GLOBALS_KEY = "globals"
 NOTE_KEY_PREFIX = "note:"
 CSP_SIZES_KEY = "csp_sizes"
 VARY_KEY = "vary"
+CACHE_CONTROL_KEY = "cache_control"
 VALUE_HISTOGRAMS_KEY = "value_histograms"
 COOCCUR_KEY = "cooccur"
 
@@ -418,6 +423,8 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
             stats["truncated_asn_counts"] = True
     if stats.get("vary"):
         trim_vary(stats["vary"], TOP_K_RECIPES)
+    if stats.get("cache_control"):
+        trim_cache_control(stats["cache_control"], TOP_K_RECIPES)
     if stats.get("cooccur"):
         trim_cooccur(stats["cooccur"], TOP_K_RECIPES)
     for note in stats.get("notes", {}).values():
@@ -724,6 +731,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         vary = stats.get("vary") or {}
         if vary:
             yield VARY_KEY, vary
+        cache_control = stats.get("cache_control") or {}
+        if cache_control:
+            yield CACHE_CONTROL_KEY, cache_control
         value_histograms = stats.get("value_histograms") or {}
         if value_histograms:
             yield VALUE_HISTOGRAMS_KEY, value_histograms
@@ -759,6 +769,12 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                 merge_vary(merged_vary, value)
             trim_vary(merged_vary, TOP_K_RECIPES)
             yield VARY_KEY, merged_vary
+        elif key == CACHE_CONTROL_KEY:
+            merged_cc: Dict[str, Any] = {}
+            for value in values:
+                merge_cache_control(merged_cc, value)
+            trim_cache_control(merged_cc, TOP_K_RECIPES)
+            yield CACHE_CONTROL_KEY, merged_cc
         elif key == VALUE_HISTOGRAMS_KEY:
             merged_histograms: Dict[str, Dict[str, int]] = {}
             for value in values:

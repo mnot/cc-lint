@@ -14,6 +14,9 @@ import html
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
+from cc_lint.cache_control import COUNT_FIELD as CC_COUNT_FIELD
+from cc_lint.cache_control import count_nonstandard as cc_count_nonstandard
+from cc_lint.cache_control import is_nonstandard_directive
 from cc_lint.cooccur import (
     EMPTY_BUNDLE_LABEL,
     conditional_lifts,
@@ -1217,6 +1220,95 @@ def render_vary_section(vary: Dict[str, Any]) -> str:
     )
 
 
+# ---- Cache-Control recipes -------------------------------------------------
+
+
+def _cc_recipe_label_html(recipe: str) -> str:
+    parts: List[str] = []
+    for token in recipe_tokens(recipe):
+        escaped = html.escape(token)
+        if is_nonstandard_directive(token):
+            parts.append(
+                '<span class="cc-synthetic" '
+                'title="non-standard / vendor directive">'
+                f"{escaped}</span>"
+            )
+        else:
+            parts.append(escaped)
+    return ", ".join(parts)
+
+
+def _render_cc_recipe_table(recipe_dict: Dict[str, Any], denom: int) -> str:
+    occ: Dict[str, int] = recipe_dict.get("occ", {})
+    hlls: Dict[str, Any] = recipe_dict.get("hlls", {})
+    if not occ:
+        return '<p class="muted">No data.</p>'
+    ordered = sorted(occ.items(), key=lambda kv: kv[1], reverse=True)
+    head = ["Recipe", "Responses", "% of Cache-Control", "Sites", "Non-standard"]
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for recipe, count in ordered[:25]:
+        sites = _hll_sites(hlls, recipe)
+        nonstd = cc_count_nonstandard(recipe)
+        cells = [
+            _cc_recipe_label_html(recipe),
+            _format_count(count),
+            _pct_of_vary(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+            _format_count(nonstd) if nonstd else "—",
+        ]
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    if len(ordered) > 25:
+        rows.append(
+            f'<tr><td colspan="{len(head)}" class="muted">'
+            f"… {len(ordered) - 25} more recipes not shown …</td></tr>"
+        )
+    return (
+        '<table class="data-table vary-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
+def _render_cc_marginal_table(
+    entries: List[Tuple[str, int]],
+    hlls: Dict[str, Any],
+    denom: int,
+    show_standard: bool,
+    limit: int = 30,
+) -> str:
+    if not entries:
+        return '<p class="muted">None observed.</p>'
+    head = ["Directive", "Responses", "% of Cache-Control", "Sites"]
+    if show_standard:
+        head.append("Standard?")
+    header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
+    rows: List[str] = []
+    for directive, count in entries[:limit]:
+        sites = _hll_sites(hlls, directive)
+        cells = [
+            html.escape(directive),
+            _format_count(count),
+            _pct_of_vary(count, denom),
+            f"~{_format_count(sites)}" if sites else "—",
+        ]
+        if show_standard:
+            cells.append("no" if is_nonstandard_directive(directive) else "yes")
+        rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    if len(entries) > limit:
+        rows.append(
+            f'<tr><td colspan="{len(head)}" class="muted">'
+            f"… {len(entries) - limit} more not shown …</td></tr>"
+        )
+    return (
+        '<table class="data-table vary-table">'
+        f"<thead><tr>{header}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+    )
+
+
 # ---- header co-occurrence --------------------------------------------------
 
 
@@ -1257,6 +1349,73 @@ def _render_bundle_table(
         f"<thead><tr>{header}</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
+    )
+
+
+def render_cache_control_section(cache_control: Dict[str, Any]) -> str:
+    """Render the Cache-Control recipe section (issue #9)."""
+    if not cache_control:
+        return ""
+    denom = int(cache_control.get(CC_COUNT_FIELD, 0))
+    if denom <= 0:
+        return ""
+    recipes: Dict[str, Any] = cache_control.get("recipes") or {}
+    marginals: Dict[str, Any] = cache_control.get("marginals") or {}
+    marg_occ: Dict[str, int] = marginals.get("occ", {})
+    marg_hlls: Dict[str, Any] = marginals.get("hlls", {})
+
+    blocks: List[str] = [
+        '<p class="muted">Composition of <code>Cache-Control</code> across the '
+        f"{_format_count(denom)} responses that carried one. A "
+        "<strong>recipe</strong> is the normalised, deduped, sorted set of "
+        "directives in a response's <code>Cache-Control</code>, with every "
+        "directive value collapsed to <code>=N</code> &mdash; so "
+        "<code>max-age=0</code> and <code>max-age=31536000</code> share one "
+        "recipe (the actual numbers are a separate distribution). This shows "
+        "the whole shape operators ship, where <code>CC_CONFLICTING</code> "
+        "flags only the conflict. <em>Responses</em> is occurrence-weighted "
+        "(one CDN origin can emit a recipe across millions of responses); "
+        "<em>Sites</em> is a HyperLogLog estimate of distinct operators.</p>",
+        "<h3>Top Cache-Control recipes</h3>",
+    ]
+    if cache_control.get("recipes_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    blocks.append(_render_cc_recipe_table(recipes, denom))
+
+    blocks.append("<h3>Cache-Control directives (marginals)</h3>")
+    blocks.append(
+        '<p class="muted">Prevalence of each directive, regardless of value or '
+        "combination, as a share of responses carrying "
+        "<code>Cache-Control</code>.</p>"
+    )
+    if cache_control.get("marginals_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    top_marginals = sorted(marg_occ.items(), key=lambda kv: kv[1], reverse=True)
+    blocks.append(
+        _render_cc_marginal_table(top_marginals, marg_hlls, denom, show_standard=True)
+    )
+
+    blocks.append(
+        "<h3>Non-standard directives</h3>"
+        '<p class="muted">Directives outside httplint\'s RFC 9111 registry '
+        "&mdash; vendor knobs, edge-CDN extensions, and typos. Approximate: a "
+        "registered directive httplint lacks a parser for would also land "
+        "here.</p>"
+    )
+    nonstandard = sorted(
+        ((d, c) for d, c in marg_occ.items() if is_nonstandard_directive(d)),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+    blocks.append(
+        _render_cc_marginal_table(nonstandard, marg_hlls, denom, show_standard=False)
+    )
+
+    return (
+        '<section id="cache-control">'
+        "<h2>Cache-Control recipes</h2>"
+        f"{''.join(blocks)}"
+        "</section>"
     )
 
 

@@ -405,6 +405,47 @@ class TestRenderer(unittest.TestCase):
         html = self._render({"total_responses": 5, "notes": {}})
         self.assertNotIn('id="vary"', html)
 
+    def test_cache_control_section_rendered(self) -> None:
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "cache_control": {
+                "responses_with_cc": 10,
+                "recipes": {
+                    "occ": {
+                        "max-age=N, must-revalidate, no-cache, no-store, private": 6,
+                        "max-age=N, surrogate-control=N": 4,
+                    },
+                    "hlls": {},
+                },
+                "marginals": {
+                    "occ": {
+                        "max-age": 10,
+                        "no-store": 6,
+                        "private": 6,
+                        "surrogate-control": 4,
+                    },
+                    "hlls": {},
+                },
+            },
+        }
+        html, md = self._render_both(data)
+        self.assertIn('id="cache-control"', html)
+        self.assertIn("Cache-Control recipes", html)
+        self.assertIn("## Cache-Control recipes", md)
+        # The kitchen-sink recipe surfaces in both views.
+        self.assertIn("no-store", html)
+        self.assertIn("no-store", md)
+        # Non-standard directive flagged in HTML and listed in markdown.
+        self.assertIn("cc-synthetic", html)
+        self.assertIn("surrogate-control", html)
+        self.assertIn("Non-standard directives", md)
+        self.assertIn("surrogate-control", md)
+
+    def test_no_cache_control_section_absent(self) -> None:
+        html = self._render({"total_responses": 5, "notes": {}})
+        self.assertNotIn('id="cache-control"', html)
+
     def test_cooccur_section_rendered(self) -> None:
         bundle = "strict-transport-security, x-content-type-options"
         data: Dict[str, Any] = {

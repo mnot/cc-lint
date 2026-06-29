@@ -4,7 +4,13 @@ import unittest
 from typing import Any, Dict
 
 from cc_lint.hll import hll_estimate
-from cc_lint.recipes import RecipeStats, merge_recipe_dict, trim_recipe_dict
+from cc_lint.recipes import (
+    RecipeStats,
+    merge_recipe_block,
+    merge_recipe_dict,
+    trim_recipe_block,
+    trim_recipe_dict,
+)
 
 
 class TestRecipeStats(unittest.TestCase):
@@ -70,6 +76,39 @@ class TestTrimRecipeDict(unittest.TestCase):
         recipe_dict = stats.to_dict()
         self.assertFalse(trim_recipe_dict(recipe_dict, 10))
         self.assertEqual(set(recipe_dict["occ"]), {"a"})
+
+
+class TestRecipeBlock(unittest.TestCase):
+    def test_merge_block_sums_count_and_subkeys(self) -> None:
+        target: Dict[str, Any] = {
+            "n": 2,
+            "recipes": {"occ": {"a": 2}, "hlls": {}},
+            "marginals": {"occ": {"x": 2}, "hlls": {}},
+            "recipes_truncated": True,
+        }
+        source: Dict[str, Any] = {
+            "n": 3,
+            "recipes": {"occ": {"a": 1, "b": 3}, "hlls": {}},
+            "marginals": {"occ": {"x": 1, "y": 3}, "hlls": {}},
+        }
+        merge_recipe_block(target, source, "n")
+        self.assertEqual(target["n"], 5)
+        self.assertEqual(target["recipes"]["occ"], {"a": 3, "b": 3})
+        self.assertEqual(target["marginals"]["occ"], {"x": 3, "y": 3})
+        # Sticky truncation flag carried forward via OR.
+        self.assertTrue(target["recipes_truncated"])
+
+    def test_trim_block_flags_per_subkey(self) -> None:
+        block: Dict[str, Any] = {
+            "n": 6,
+            "recipes": {"occ": {"a": 3, "b": 2, "c": 1}, "hlls": {}},
+            "marginals": {"occ": {"x": 1}, "hlls": {}},
+        }
+        trim_recipe_block(block, 2)
+        self.assertEqual(set(block["recipes"]["occ"]), {"a", "b"})
+        self.assertTrue(block["recipes_truncated"])
+        # Below-cap subkey is untouched and unflagged.
+        self.assertNotIn("marginals_truncated", block)
 
 
 if __name__ == "__main__":

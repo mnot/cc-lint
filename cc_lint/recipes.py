@@ -28,9 +28,16 @@ occurrence and reports whether anything was dropped, mirroring the
 """
 
 from collections import Counter
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from cc_lint.hll import HLL_P_PER_NOTE, hll_add, hll_merge, make_registers
+
+# The two sub-dicts every recipe *block* (a serialized header view) carries: a
+# high-cardinality recipe dict and a bounded marginal dict, each a recipe dict
+# in the {"occ": ..., "hlls": ...} shape above. ``cc_lint.vary``,
+# ``cc_lint.cache_control``, and ``cc_lint.cooccur`` serialize to this shape,
+# so the block-level merge and trim live here once.
+RECIPE_BLOCK_SUBKEYS: Tuple[str, ...] = ("recipes", "marginals")
 
 # The canonical separator between tokens in a recipe string. A recipe is the
 # sorted, deduped, ``", "``-joined set of its tokens (Vary field-names,
@@ -102,6 +109,41 @@ def merge_recipe_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
             hll_target[recipe] = list(registers)
         else:
             hll_merge(existing, registers)
+
+
+def merge_recipe_block(
+    target: Dict[str, Any],
+    source: Dict[str, Any],
+    count_field: str,
+    subkeys: Tuple[str, ...] = RECIPE_BLOCK_SUBKEYS,
+) -> None:
+    """Merge a serialized recipe *block* into ``target`` in place.
+
+    A block is ``{count_field: int, <sub>: recipe_dict, <sub>_truncated:
+    bool, ...}`` for each ``sub`` in ``subkeys`` -- the shape both the
+    ``vary`` and ``cache_control`` views emit. ``count_field`` (the
+    response-count scalar) sums; each sub recipe dict merges via
+    :func:`merge_recipe_dict`; truncation flags OR together. Header-specific
+    wrappers (``merge_cache_control``) just bind ``count_field``.
+    """
+    target[count_field] = target.get(count_field, 0) + int(source.get(count_field, 0))
+    for sub in subkeys:
+        if sub in source:
+            merge_recipe_dict(target.setdefault(sub, {}), source[sub])
+        if source.get(f"{sub}_truncated"):
+            target[f"{sub}_truncated"] = True
+
+
+def trim_recipe_block(
+    block: Dict[str, Any],
+    top_k: int,
+    subkeys: Tuple[str, ...] = RECIPE_BLOCK_SUBKEYS,
+) -> None:
+    """Cap each sub recipe dict in a block, setting sticky truncation flags."""
+    for sub in subkeys:
+        recipe_dict = block.get(sub)
+        if recipe_dict and trim_recipe_dict(recipe_dict, top_k):
+            block[f"{sub}_truncated"] = True
 
 
 def trim_recipe_dict(recipe_dict: Dict[str, Any], top_k: int) -> bool:
