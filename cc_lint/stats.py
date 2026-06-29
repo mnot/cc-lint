@@ -36,6 +36,22 @@ def _level_to_severity(level: Any) -> Optional[str]:
     return None
 
 
+def iter_notes_depth_first(notes: Any) -> Iterator[Note]:
+    """Yield each note and all of its descendant subnotes, depth-first.
+
+    httplint attaches a class of findings — the strength/quality layer for
+    CSP, HSTS, Permissions-Policy, etc. — as children via ``Note.add_child()``,
+    which appends to ``note.subnotes`` rather than to ``linter.notes``. A child
+    is itself a full ``Note`` (own level/vars and possibly its own subnotes), so
+    we recurse rather than descend a single level.
+    """
+    for note in notes:
+        yield note
+        subnotes = getattr(note, "subnotes", None)
+        if subnotes:
+            yield from iter_notes_depth_first(subnotes)
+
+
 def _header_value_byte_len(value: Any) -> int:
     """Best-effort byte length of a header field value as it appeared on the wire.
 
@@ -262,7 +278,7 @@ class StatsCollector:
         # it up into severity_counts after the note loop.
         max_severity: Optional[str] = None
         severity_order = {"bad": 4, "warn": 3, "info": 2, "good": 1}
-        for note in linter.notes:
+        for note in iter_notes_depth_first(linter.notes):
             level = getattr(note, "level", None)
             severity = _level_to_severity(level)
             if severity is None:
