@@ -543,5 +543,65 @@ class TestValueHistograms(unittest.TestCase):
         )
 
 
+class TestHeaderByteEconomics(unittest.TestCase):
+    """Header byte economics accumulation (issue #10)."""
+
+    @staticmethod
+    def _line_bytes(name: str, value: str) -> int:
+        # Mirrors stats._HEADER_FRAMING_BYTES: name + value + ": " + CRLF.
+        return len(name) + len(value) + 4
+
+    def test_field_bytes_and_total_and_histogram(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            _linter_with_headers(
+                "http://a.example/", [("Server", "nginx"), ("X-Test", "abc")]
+            )
+        )
+        data = stats.to_dict()
+        server = self._line_bytes("server", "nginx")
+        xtest = self._line_bytes("x-test", "abc")
+        self.assertEqual(data["field_bytes"], {"server": server, "x-test": xtest})
+        self.assertEqual(data["total_header_bytes"], server + xtest)
+        # Small response lands in the smallest byte bucket.
+        self.assertEqual(data["header_block_hist"], {"<256 B": 1})
+
+    def test_crawler_headers_excluded(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            _linter_with_headers(
+                "http://a.example/",
+                [("Server", "nginx"), ("X-Crawler-Detected-Charset", "utf-8")],
+            )
+        )
+        data = stats.to_dict()
+        server = self._line_bytes("server", "nginx")
+        # x-crawler-* is CC-injected, not origin: excluded from every byte axis.
+        self.assertEqual(data["field_bytes"], {"server": server})
+        self.assertEqual(data["total_header_bytes"], server)
+
+    def test_repeated_header_counts_each_occurrence(self) -> None:
+        stats = StatsCollector()
+        stats.process_linter(
+            _linter_with_headers(
+                "http://a.example/",
+                [("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")],
+            )
+        )
+        data = stats.to_dict()
+        each = self._line_bytes("set-cookie", "a=1")
+        self.assertEqual(data["field_bytes"]["set-cookie"], 2 * each)
+
+    def test_accumulates_across_responses(self) -> None:
+        stats = StatsCollector()
+        for _ in range(3):
+            stats.process_linter(
+                _linter_with_headers("http://a.example/", [("Server", "nginx")])
+            )
+        data = stats.to_dict()
+        self.assertEqual(data["header_block_hist"], {"<256 B": 3})
+        self.assertEqual(data["total_header_bytes"], 3 * self._line_bytes("server", "nginx"))
+
+
 if __name__ == "__main__":
     unittest.main()

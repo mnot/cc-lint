@@ -209,6 +209,7 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target.setdefault("severity_counts", {})
     _merge_counts(target["severity_counts"], source.get("severity_counts", {}))
     _merge_layer_stats(target, source)
+    _merge_header_bytes(target, source)
     target.setdefault("notes", {})
     for note_id, note in source.get("notes", {}).items():
         target["notes"].setdefault(note_id, {"count": 0, "samples": [], "vars": {}})
@@ -280,6 +281,26 @@ def _failure_bucket(exit_code: Optional[int]) -> str:
     return _SIGNAL_BUCKETS.get(-exit_code, "warc_signal_other")
 
 
+def _merge_header_bytes(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    """Merge the header byte-economics fields (issue #10).
+
+    ``field_bytes`` and ``header_block_hist`` are plain count dicts (per-header
+    byte totals and the per-response size histogram) that sum; the histogram is
+    bounded by BYTE_BUCKETS so only field_bytes carries a trim path.
+    ``total_header_bytes`` is an exact scalar that sums.
+    """
+    if "field_bytes" in source:
+        _merge_counts(target.setdefault("field_bytes", {}), source["field_bytes"])
+    if "header_block_hist" in source:
+        _merge_counts(
+            target.setdefault("header_block_hist", {}), source["header_block_hist"]
+        )
+    if "total_header_bytes" in source:
+        target["total_header_bytes"] = target.get("total_header_bytes", 0) + int(
+            source["total_header_bytes"]
+        )
+
+
 def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target["total_responses"] = target.get("total_responses", 0) + int(
         source.get("total_responses", 0)
@@ -291,11 +312,13 @@ def merge_globals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target.setdefault("severity_counts", {})
     _merge_counts(target["severity_counts"], source.get("severity_counts", {}))
     _merge_layer_stats(target, source)
+    _merge_header_bytes(target, source)
     for flag in (
         "truncated_field_counts",
         "truncated_unprocessed_counts",
         "truncated_field_counts_by_layer",
         "truncated_asn_counts",
+        "truncated_field_bytes",
     ):
         if source.get(flag):
             target[flag] = True
@@ -406,6 +429,15 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
         )
         if was_trunc:
             stats["truncated_unprocessed_counts"] = True
+    if "field_bytes" in stats:
+        # Per-header byte totals (issue #10) share field_counts' long tail; cap
+        # to the same top-K, by bytes. header_block_hist is bucket-bounded and
+        # total_header_bytes is a scalar, so neither needs trimming.
+        stats["field_bytes"], was_trunc = _trim_counts(
+            stats["field_bytes"], TOP_K_FIELD_COUNTS
+        )
+        if was_trunc:
+            stats["truncated_field_bytes"] = True
     if "field_counts_by_layer" in stats:
         # Outer keys (header names) share field_counts' long tail; cap them to
         # the same top-K by per-field total. The inner per-layer dicts are
@@ -714,11 +746,18 @@ class CCLintJob(MRJob):  # type: ignore[misc]
             globals_payload["field_counts_by_layer"] = stats["field_counts_by_layer"]
         if stats.get("asn_counts"):
             globals_payload["asn_counts"] = stats["asn_counts"]
+        if stats.get("field_bytes"):
+            globals_payload["field_bytes"] = stats["field_bytes"]
+        if stats.get("header_block_hist"):
+            globals_payload["header_block_hist"] = stats["header_block_hist"]
+        if stats.get("total_header_bytes"):
+            globals_payload["total_header_bytes"] = stats["total_header_bytes"]
         for flag in (
             "truncated_field_counts",
             "truncated_unprocessed_counts",
             "truncated_field_counts_by_layer",
             "truncated_asn_counts",
+            "truncated_field_bytes",
         ):
             if stats.get(flag):
                 globals_payload[flag] = True

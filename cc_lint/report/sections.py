@@ -26,7 +26,12 @@ from cc_lint.cooccur import (
     ranked_marginals,
 )
 from cc_lint.fingerprint import UNMATCHED
-from cc_lint.histograms import LIFETIME_BUCKET_ORDER, bucket_order
+from cc_lint.header_categories import categorize_header_bytes
+from cc_lint.histograms import (
+    BYTE_BUCKET_ORDER,
+    LIFETIME_BUCKET_ORDER,
+    bucket_order,
+)
 from cc_lint.hll import hll_estimate
 from cc_lint.recipes import recipe_tokens
 from cc_lint.report.severity import build_summary_index
@@ -730,6 +735,165 @@ def render_field_counts_section(
         "</table>"
         "</section>"
     )
+
+
+# Human labels for the byte-economics categories (issue #10).
+_HEADER_CATEGORY_LABELS = {
+    "standard": "Standard (registered)",
+    "deprecated": "Deprecated / obsoleted",
+    "proprietary": "Proprietary (non-registered)",
+}
+
+# Single headers worth calling out by byte cost (issue #10): Set-Cookie is the
+# largest single contributor and rides every *subsequent request* (upstream,
+# recurring cost, not just response bloat); Content-Security-Policy is the
+# largest single policy blob a response tends to carry.
+_HEADER_BYTE_CALLOUTS = [
+    (
+        "set-cookie",
+        "Cost is upstream and recurring: each cookie is echoed on every "
+        "subsequent request, so this understates its real traffic share.",
+    ),
+    (
+        "content-security-policy",
+        "The largest single policy header; see the per-site CSP size "
+        "distribution below.",
+    ),
+]
+
+
+def _render_header_bytes_bar_row(label: str, count: int, pct: float) -> str:
+    bar_width = int(pct * 2)  # 200px max
+    return (
+        f"<tr><td>{html.escape(label)}</td>"
+        f"<td>{_format_count(count)}</td>"
+        f"<td>{pct:.1f}%</td>"
+        f'<td><span class="csp-bar" style="width:{bar_width}px"></span></td>'
+        "</tr>"
+    )
+
+
+def render_header_bytes_section(  # pylint: disable=too-many-locals
+    field_bytes: Dict[str, int],
+    header_block_hist: Dict[str, int],
+    total_header_bytes: int,
+    total_responses: int,
+    truncated: bool,
+) -> str:
+    """Header byte economics: size distribution, category split, top-by-bytes."""
+    if not field_bytes and not total_header_bytes:
+        return ""
+
+    # Per-response header-block size distribution + mean headline.
+    dist_total = sum(header_block_hist.values())
+    dist_rows = [
+        _render_header_bytes_bar_row(
+            label,
+            header_block_hist.get(label, 0),
+            (header_block_hist.get(label, 0) / dist_total * 100) if dist_total else 0,
+        )
+        for label in BYTE_BUCKET_ORDER
+        if header_block_hist.get(label)
+    ]
+    mean_bytes = total_header_bytes / total_responses if total_responses else 0
+
+    # Category split, computed from the (trimmed) per-header byte dict.
+    categories = categorize_header_bytes(field_bytes)
+    cat_total = sum(byte_total for _, byte_total in categories)
+    cat_rows = [
+        _render_header_bytes_bar_row(
+            _HEADER_CATEGORY_LABELS.get(category, category),
+            byte_total,
+            (byte_total / cat_total * 100) if cat_total else 0,
+        )
+        for category, byte_total in categories
+    ]
+
+    # Notable single headers.
+    callout_rows: List[str] = []
+    for name, gloss in _HEADER_BYTE_CALLOUTS:
+        byte_total = field_bytes.get(name, 0)
+        if not byte_total:
+            continue
+        pct = (byte_total / cat_total * 100) if cat_total else 0
+        callout_rows.append(
+            f"<tr><td><code>{html.escape(name)}</code></td>"
+            f"<td>{_format_byte_size(byte_total)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f'<td class="muted">{html.escape(gloss)}</td></tr>'
+        )
+
+    # Top headers by bytes (distinct from the top-by-count table above).
+    top = sorted(field_bytes.items(), key=lambda kv: kv[1], reverse=True)[:50]
+    top_rows = [
+        f"<tr><td>{html.escape(name)}</td>"
+        f"<td>{_format_byte_size(byte_total)}</td>"
+        f"<td>{(byte_total / cat_total * 100) if cat_total else 0:.1f}%</td></tr>"
+        for name, byte_total in top
+    ]
+
+    parts = [
+        '<section id="header-bytes">',
+        "<h2>Header byte economics</h2>",
+        '<p class="muted">How many bytes of response header the corpus ships, '
+        "and how that budget splits by field category. Bytes are "
+        "<em>uncompressed</em> &mdash; <code>len(name) + len(value) + 4</code> "
+        "(the <code>: </code> and CRLF framing) per header occurrence, summed "
+        "over a response&rsquo;s field lines. HTTP/2 and HTTP/3 compress "
+        "repeated headers heavily with HPACK/QPACK, so this overstates "
+        "on-the-wire cost; it measures origin / pre-compression intent. "
+        "Crawler-injected <code>x-crawler-*</code> headers are excluded.</p>",
+    ]
+
+    if dist_rows:
+        parts.append(
+            f"<p>Mean header block: <strong>{_format_byte_size(int(mean_bytes))}"
+            f"</strong> per response across {_format_count(total_responses)} "
+            "responses.</p>"
+            "<h3>Header-block size distribution</h3>"
+            '<table class="data-table csp-table">'
+            "<thead><tr><th>Header-block size</th><th>Responses</th>"
+            "<th>% of responses</th><th></th></tr></thead>"
+            f"<tbody>{''.join(dist_rows)}</tbody></table>"
+        )
+
+    if cat_rows:
+        parts.append(
+            "<h3>Bytes by field category</h3>"
+            f"{TRUNCATED_NOTE if truncated else ''}"
+            '<p class="muted">Share of the head-of-distribution header bytes '
+            "carried by registered, deprecated, and non-registered fields. "
+            "Classification reuses httplint&rsquo;s field knowledge (the same "
+            "registered/non-standard boundary the Vary section uses).</p>"
+            '<table class="data-table csp-table">'
+            "<thead><tr><th>Category</th><th>Bytes</th><th>% of header bytes</th>"
+            "<th></th></tr></thead>"
+            f"<tbody>{''.join(cat_rows)}</tbody></table>"
+        )
+
+    if callout_rows:
+        parts.append(
+            "<h3>Notable single headers</h3>"
+            '<table class="data-table">'
+            "<thead><tr><th>Header</th><th>Bytes</th><th>% of header bytes</th>"
+            "<th>Note</th></tr></thead>"
+            f"<tbody>{''.join(callout_rows)}</tbody></table>"
+        )
+
+    if top_rows:
+        parts.append(
+            "<h3>Top Response Headers by bytes</h3>"
+            f"{TRUNCATED_NOTE if truncated else ''}"
+            '<p class="muted">A different ranking than top-by-count: a header '
+            "can be rare but huge (a giant CSP) or ubiquitous but small.</p>"
+            '<table class="data-table">'
+            "<thead><tr><th>Header</th><th>Bytes</th><th>% of header bytes</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(top_rows)}</tbody></table>"
+        )
+
+    parts.append("</section>")
+    return "".join(parts)
 
 
 CSP_BUCKETS = [
