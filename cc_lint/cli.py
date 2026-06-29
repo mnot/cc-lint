@@ -107,9 +107,7 @@ def lint_cc(  # pylint: disable=too-many-positional-arguments
     _run_lint_loop(warc_paths, limit, record_limit, cache_dir, top_sites_set, stats)
 
     render_report(stats.to_dict(), output)
-    logger.info(
-        "Done. Wrote %s and %s", output, default_markdown_path(output)
-    )
+    logger.info("Done. Wrote %s and %s", output, default_markdown_path(output))
 
 
 def _process_single_warc(
@@ -148,9 +146,7 @@ def _process_single_warc(
                 continue
     except Exception as exc:  # pylint: disable=broad-except
         # Broad on purpose: one bad WARC must not abort the run.
-        logger.error(
-            "Error streaming %s (%s): %s", warc_path, type(exc).__name__, exc
-        )
+        logger.error("Error streaming %s (%s): %s", warc_path, type(exc).__name__, exc)
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from typing import Any, Callable, Iterator, Optional
 
 import boto3
 from botocore.config import Config
-from warcio.archiveiterator import ArchiveIterator
+from warcio.archiveiterator import ArchiveIterator  # type: ignore[import-untyped]
 
 from cc_lint.cc_paths import warc_path_to_wat
 

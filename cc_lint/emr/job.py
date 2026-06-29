@@ -25,8 +25,8 @@ from cc_lint.emr.compat import install_mrjob_pipes_compat
 install_mrjob_pipes_compat()
 
 # pylint: disable=wrong-import-position,wrong-import-order,ungrouped-imports
-from mrjob.job import MRJob
-from mrjob.protocol import JSONProtocol
+from mrjob.job import MRJob  # type: ignore[import-untyped]
+from mrjob.protocol import JSONProtocol  # type: ignore[import-untyped]
 
 import cc_lint
 from cc_lint.emr.warc_worker import (
