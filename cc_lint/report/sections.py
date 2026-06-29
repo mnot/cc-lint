@@ -1223,10 +1223,6 @@ def render_vary_section(vary: Dict[str, Any]) -> str:
 # ---- Cache-Control recipes -------------------------------------------------
 
 
-def _pct_of_cc(count: int, denom: int) -> str:
-    return f"{count / denom * 100:.2f}%" if denom else "—"
-
-
 def _cc_recipe_label_html(recipe: str) -> str:
     parts: List[str] = []
     for token in recipe_tokens(recipe):
@@ -1257,7 +1253,7 @@ def _render_cc_recipe_table(recipe_dict: Dict[str, Any], denom: int) -> str:
         cells = [
             _cc_recipe_label_html(recipe),
             _format_count(count),
-            _pct_of_cc(count, denom),
+            _pct_of_vary(count, denom),
             f"~{_format_count(sites)}" if sites else "—",
             _format_count(nonstd) if nonstd else "—",
         ]
@@ -1294,7 +1290,7 @@ def _render_cc_marginal_table(
         cells = [
             html.escape(directive),
             _format_count(count),
-            _pct_of_cc(count, denom),
+            _pct_of_vary(count, denom),
             f"~{_format_count(sites)}" if sites else "—",
         ]
         if show_standard:
