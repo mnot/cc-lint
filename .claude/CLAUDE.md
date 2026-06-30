@@ -33,7 +33,8 @@ breaking any of them turns an 11-hour run into a memory disaster:
   counts (and for the per-header `field_bytes` byte-economics dict, #10);
   `TOP_K_CSP_SITES=100000` for the per-site CSP-size dict; `TOP_K_RECIPES=2000`
   per Vary *and* Cache-Control recipe/marginal dict (reused for the
-  co-occurrence bundle/marginal/pair dicts too). Adding a new tracked dict
+  co-occurrence bundle/marginal/pair dicts too); `TOP_K_ASN=5000` for the
+  per-ASN count dict (`truncated_asn_counts` flag). Adding a new tracked dict
   means adding a trim path and a `truncated_*` flag.
 - **Sharded reducer keys** (`cc_lint.emr.job`): the mapper does NOT emit a
   single "stats" record. It emits `GLOBALS_KEY`, `NOTE_KEY_PREFIX:<note_id>`
@@ -147,7 +148,7 @@ when those files are dirty.
   `Fix:`, `Refactor:`, `Test:`, `Docs:`, `Build:` are invisible to the
   release tooling, so prefer the four canonical prefixes whenever the
   change fits one. Subject ≤72 cols. The body explains *why*. Include
-  the `Co-Authored-By: Claude Opus 4.7` trailer.
+  the `Co-Authored-By: Claude Opus 4.8` trailer.
 - No backward-compat shims, no half-finished implementations, no
   speculative abstractions. The codebase prefers "delete cleanly" to
   "deprecate gradually" — fine here because there are no external
