@@ -145,9 +145,11 @@ This pipeline does, in order:
    single per-mapper dict.
 3. `aws s3 sync` pulls the reducer output into
    `results/$(CRAWL_ID)-$(RUN_ID)/`.
-4. `cc_lint.emr.finalize` merges the sharded `globals` / `note:*` /
-   `csp_sizes` records from the `part-*` files and renders
-   `report.html` + `report.md`.
+4. `cc_lint.emr.finalize` merges the sharded reducer records from the
+   `part-*` files — `globals`, per-note `note:*`, and the per-dimension
+   shards (`csp_sizes`, `vary`, `cache_control`, `value_histograms`,
+   `cooccur`, `note_cooccur`, `transition`) — and renders `report.html`
+   + `report.md`.
 
 ### Re-rendering an existing run
 
@@ -183,6 +185,7 @@ and any child-process failures.
 | --- | --- |
 | `CRAWL_ID` | Common Crawl release to process (e.g. `CC-MAIN-2026-12`) |
 | `TOP_N`, `LOCAL_TOP_N` | Tranco top-N filter for full / local runs |
+| `SAMPLE_TOP_N` | Tranco ceiling for collecting per-note sample URLs |
 | `RECORD_LIMIT` | Max records per WARC (0 = all) |
 | `MAP_TASKS`, `REDUCES` | Full-run cluster sizing |
 | `TEST_MAP_TASKS`, `TEST_REDUCES`, `LIMIT` | Smoke-test sizing |
@@ -195,18 +198,41 @@ and any child-process failures.
 
 ```
 cc_lint/
-├── cli.py              local cc-lint CLI (lint, report)
-├── crawling.py         warcio-based WARC/WAT streaming for the CLI
-├── linting.py          httplint wiring for warc/wat records
-├── stats.py            StatsCollector and per-note tracking config
-├── report.py           HTML report generator
-├── top_sites.py        Tranco top-N loader
+├── cli.py / __main__.py  local `cc-lint lint` CLI
+├── crawling.py           HTTP-only WAT streaming for the CLI
+├── cc_paths.py           Common Crawl path helpers (CLI + EMR)
+├── linting.py            httplint wiring for WAT records
+├── stats.py              StatsCollector and per-note tracking config
+├── top_sites.py          Tranco top-N loader + site normalisation
+├── hll.py                HyperLogLog distinct-site estimator
+├── histograms.py         bucket scales for numeric note vars
+├── redact.py             scrub on-the-wire secrets from samples (#28)
+├── types.py              shared TypedDicts
+│   # analysis dimensions — each its own shuffle aggregation
+├── cooccur.py            header co-occurrence (#6)
+├── note_cooccur.py       finding co-occurrence (#7)
+├── transition.py         legacy/modern transition tax (#11)
+├── vary.py               Vary composition
+├── cache_control.py      Cache-Control recipes
+├── recipes.py            shared top-N recipe machinery
+├── fingerprint.py        infrastructure fingerprinting (#4)
+├── ipasn.py              offline IP->ASN from a CAIDA pfx2as snapshot (#4)
+├── header_categories.py  header byte-economics categories (#10)
+├── header_census.py      non-standard header census (#12)
+├── *.toml                data tables: fingerprints, header_families,
+│                         cooccur_alphabet
+├── report/
+│   ├── render.py         top-level orchestration (HTML + Markdown)
+│   ├── sections.py       HTML sections (incl. the TOC nav)
+│   ├── markdown.py       Markdown renderer
+│   ├── severity.py       Note-class severity / category / summary lookup
+│   └── styles.py         CSS
 └── emr/
-    ├── job.py          mrjob entry point (CCLintJob)
-    ├── warc_source.py  requester-pays S3 + heartbeat WAT iterator
-    ├── warc_worker.py  fork-isolated per-WARC worker + pickle result
-    ├── split_paths.py  paths.gz -> N S3 chunk files
-    ├── finalize.py     part-* -> rendered report.html + report.md
-    ├── timing.py       EMR stderr.gz timing/failure summary
-    └── compat.py       Python 3.13+ `pipes` shim for mrjob
+    ├── job.py            mrjob entry point; mapper/reducer; merge_* fns
+    ├── warc_source.py    requester-pays S3 + heartbeat WAT iterator
+    ├── warc_worker.py    fork-isolated per-WARC worker + pickle result
+    ├── split_paths.py    paths.gz -> N S3 chunk files
+    ├── finalize.py       part-* -> rendered report.html + report.md
+    ├── timing.py         EMR stderr.gz timing/failure summary
+    └── compat.py         Python 3.13+ `pipes` shim for mrjob
 ```
