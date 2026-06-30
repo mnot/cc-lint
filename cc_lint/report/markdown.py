@@ -385,6 +385,12 @@ def _render_health_section(severity_counts: Dict[str, int]) -> List[str]:
         "Each response is bucketed by the most severe httplint finding it "
         "produced. Per-response, not per-site.",
         "",
+        "> The bucket is only as meaningful as httplint's per-note severity, "
+        "and one prevalent pattern can dominate. Notably, `Pragma` on a "
+        "response is flagged `BAD` (`REQUEST_HDR_IN_RESPONSE` — Pragma is a "
+        "request header), so the long-standing `Pragma: no-cache` response "
+        "convention inflates the `BAD` share here.",
+        "",
         "| Severity | Responses | % |",
         "| --- | --- | --- |",
     ]
@@ -513,7 +519,15 @@ def _render_field_counts(
     }
     if not filtered:
         return []
-    lines = ["## Top Response Headers", ""]
+    lines = [
+        "## Top Response Headers",
+        "",
+        "Count is per header occurrence — a response that sends a header more "
+        "than once counts each line — so the percentage is occurrences ÷ "
+        "responses and may slightly exceed a header's response-presence count "
+        "shown in other sections.",
+        "",
+    ]
     if truncated:
         lines.append("_Long tail elided during shuffle; head only._")
         lines.append("")
