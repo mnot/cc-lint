@@ -7,6 +7,12 @@ from typing import Any, Dict
 
 from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
 from cc_lint.report import render_report
+from cc_lint.report.markdown import _md_inline_code
+from cc_lint.report.severity import (
+    build_severity_index,
+    classify_unseen,
+    possible_note_ids,
+)
 
 SAMPLE_STATS = {
     "total_responses": 1234,
@@ -137,10 +143,17 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Reachable but not triggered", html)
         self.assertIn("Body-only", html)
         self.assertIn("Request-only", html)
-        # Specific request-only and body-only notes should not appear in the
-        # reachable bucket -- they should be classified into their own buckets.
-        self.assertIn("MISSING_USER_AGENT", html)
-        self.assertIn("BAD_GZIP", html)
+        # A representative request-only and body-only note should be routed to
+        # its own bucket and surface in the rendered page. Derive the names
+        # from the installed httplint wheel rather than pinning literals, so an
+        # upstream rename doesn't break this test (CLAUDE.md httplint-pin note).
+        possible = possible_note_ids(build_severity_index())
+        seen = set(SAMPLE_STATS.get("notes", {}).keys())
+        _reachable, request_only, body_only = classify_unseen(possible, seen)
+        self.assertTrue(request_only, "no request-only note in installed httplint")
+        self.assertTrue(body_only, "no body-only note in installed httplint")
+        self.assertIn(request_only[0], html)
+        self.assertIn(body_only[0], html)
 
     def test_truncation_flags_show(self) -> None:
         data = {
@@ -203,11 +216,82 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("require-corp; foo", html)
         # The via sample (no captured value) still renders its URL.
         self.assertIn("http://via.example/", html)
-        # Markdown carries the same per-field samples (LLM-facing parity).
+        # Markdown carries the same per-field samples (LLM-facing parity),
+        # including the per-value sample count HTML shows as "Samples (N)".
         self.assertIn("Samples by value:", md)
+        self.assertIn("Samples (1)", md)
         self.assertIn("http://coep.example/", md)
         self.assertIn("require-corp; foo", md)
         self.assertIn("http://via.example/", md)
+
+    def test_field_error_grouping_renders_in_both(self) -> None:
+        # The field_error var carries "field: error" composite keys. Both
+        # renderers must group them by field (CLAUDE.md HTML/Markdown sync),
+        # not show the raw composite strings.
+        data = {
+            "total_responses": 100,
+            "field_counts": {},
+            "unprocessed_counts": {},
+            "notes": {
+                "STRUCTURED_FIELD_PARSE_ERROR": {
+                    "count": 9,
+                    "samples": [],
+                    "vars": {
+                        "field_error": {
+                            "cache-control: bad token": 5,
+                            "cache-control: trailing comma": 2,
+                            "via: bad token": 2,
+                        },
+                    },
+                }
+            },
+        }
+        html, md = self._render_both(data)
+        # HTML groups by field with a per-field total in the row header.
+        self.assertIn("field-error", html)
+        # Markdown must group too: the field name appears once with both of
+        # its errors, and the raw composite key must NOT appear verbatim.
+        self.assertIn("| cache-control |", md)
+        self.assertIn("bad token (5)", md)
+        self.assertIn("trailing comma (2)", md)
+        self.assertNotIn("cache-control: bad token", md)
+
+    def test_md_inline_code_survives_backticks(self) -> None:
+        # No backticks: single-backtick span.
+        self.assertEqual(_md_inline_code("require-corp"), "`require-corp`")
+        # Embedded backtick: fence must be longer than the longest run, so
+        # the value's backtick can't terminate the span early.
+        self.assertEqual(_md_inline_code("a`b"), "``a`b``")
+        self.assertEqual(_md_inline_code("a``b"), "```a``b```")
+        # Leading/trailing backtick needs space padding (CommonMark).
+        self.assertEqual(_md_inline_code("`x`"), "`` `x` ``")
+
+    def test_captured_value_with_backtick_renders_safely(self) -> None:
+        data = {
+            "total_responses": 10,
+            "field_counts": {"via": 10},
+            "unprocessed_counts": {},
+            "notes": {
+                "STRUCTURED_FIELD_PARSE_ERROR": {
+                    "count": 1,
+                    "samples": [],
+                    "vars": {"field_name": {"via": 1}},
+                    "var_samples": {
+                        "field_name": {
+                            "via": [
+                                {
+                                    "url": "http://bt.example/",
+                                    "vars": {"field_values": "weird`value"},
+                                }
+                            ]
+                        }
+                    },
+                }
+            },
+        }
+        _, md = self._render_both(data)
+        # The value surfaces inside a multi-backtick fence, not a broken span.
+        self.assertIn("``weird`value``", md)
 
     def test_sites_hll_surfaces(self) -> None:
         global_hll = make_registers(HLL_P_GLOBAL)

@@ -49,6 +49,30 @@ class TestNormalizeSite(unittest.TestCase):
             normalize_site("https://blog.example.com/"), "blog.example.com"
         )
 
+    def test_idn_host_punycoded(self) -> None:
+        # Non-ASCII hosts are encoded to the punycode form Tranco lists.
+        self.assertEqual(
+            normalize_site("https://bücher.example/"), "xn--bcher-kva.example"
+        )
+
+    def test_idn_host_with_www(self) -> None:
+        self.assertEqual(
+            normalize_site("http://www.münchen.de/"), "xn--mnchen-3ya.de"
+        )
+
+    def test_idn_hostname_only(self) -> None:
+        self.assertEqual(normalize_site("例え.テスト"), "xn--r8jz45g.xn--zckzah")
+
+    def test_idn2008_sharp_s_not_mapped_to_ss(self) -> None:
+        # IDNA2008/UTS-46 (what registries and Tranco use) keeps ß; the stdlib
+        # IDNA2003 codec would wrongly map faß.de -> fass.de and miss Tranco.
+        self.assertEqual(normalize_site("https://faß.de/"), "xn--fa-hia.de")
+
+    def test_already_punycode_unchanged(self) -> None:
+        self.assertEqual(
+            normalize_site("xn--bcher-kva.example"), "xn--bcher-kva.example"
+        )
+
 
 class TestIsInTopSites(unittest.TestCase):
     def test_match(self) -> None:
@@ -62,6 +86,11 @@ class TestIsInTopSites(unittest.TestCase):
 
     def test_unparseable_input_is_false(self) -> None:
         self.assertFalse(is_in_top_sites("", {"example.com"}))
+
+    def test_idn_match_against_punycode_set(self) -> None:
+        self.assertTrue(
+            is_in_top_sites("https://bücher.example/", {"xn--bcher-kva.example"})
+        )
 
 
 class TestLoadTopSites(unittest.TestCase):

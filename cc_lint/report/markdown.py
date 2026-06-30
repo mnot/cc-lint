@@ -78,6 +78,28 @@ def _md_escape_pipe(value: str) -> str:
     return value.replace("|", "\\|")
 
 
+def _md_inline_code(value: str) -> str:
+    """Wrap a value in an inline code span that survives embedded backticks.
+
+    Untrusted on-the-wire header values can contain backticks; a plain
+    ``` `value` ``` span would terminate early at the first one. Per
+    CommonMark, delimit with a run of backticks one longer than the longest
+    run inside the value, padding with a space when it starts or ends with a
+    backtick.
+    """
+    longest = 0
+    current = 0
+    for char in value:
+        if char == "`":
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    fence = "`" * (longest + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value}{pad}{fence}"
+
+
 def _render_run_context(
     run_context: Dict[str, Any], finalized_at: Optional[str]
 ) -> List[str]:
@@ -166,10 +188,10 @@ def _render_value_samples(
         urls = [s for s in samples if s.get("url")]
         if not urls:
             continue
-        blocks.append(f"- `{_md_escape_pipe(val)}`")
+        blocks.append(f"- {_md_inline_code(val)} — Samples ({_fmt_count(len(urls))})")
         for sample in urls:
             captured = sample.get("vars", {}).get("field_values")
-            suffix = f" — `{captured}`" if captured else ""
+            suffix = f" — {_md_inline_code(captured)}" if captured else ""
             blocks.append(f"  - {sample['url']}{suffix}")
     if not blocks:
         return []
@@ -225,6 +247,41 @@ def _render_var_table(
     return lines
 
 
+def _render_field_error_block(var_name: str, counts: Dict[str, int]) -> List[str]:
+    """Render the STRUCTURED_FIELD_PARSE_ERROR.field_error grouping.
+
+    Mirrors the HTML renderer: the "field: error" composite keys are grouped
+    by field, ordered by per-field total, and capped at 50 fields. The HTML
+    table puts each field's errors in a bulleted cell; here they are joined
+    into one "Errors" cell as "error (count)" pairs.
+    """
+    grouped: Dict[str, List[Tuple[str, int]]] = {}
+    for full_key, count in counts.items():
+        field, _, error = full_key.partition(": ")
+        grouped.setdefault(field, []).append((error or full_key, count))
+
+    field_totals = {f: sum(c for _, c in errs) for f, errs in grouped.items()}
+    sorted_fields = sorted(field_totals.items(), key=lambda item: item[1], reverse=True)
+
+    heading = _VAR_LABELS_MD.get(var_name, var_name)
+    lines = [
+        f"#### {heading}",
+        "",
+        "| Field | Note fires | Errors |",
+        "| --- | --- | --- |",
+    ]
+    for field, total in sorted_fields[:50]:
+        errors = sorted(grouped[field], key=lambda item: item[1], reverse=True)
+        err_text = "; ".join(
+            f"{_md_escape_pipe(err)} ({_fmt_count(count)})" for err, count in errors
+        )
+        lines.append(f"| {_md_escape_pipe(field)} | {_fmt_count(total)} | {err_text} |")
+    if len(sorted_fields) > 50:
+        lines.append(f"_… {len(sorted_fields) - 50} more fields not shown …_")
+    lines.append("")
+    return lines
+
+
 def _render_note_block(
     note_id: str,
     note_data: Dict[str, Any],
@@ -275,6 +332,9 @@ def _render_note_block(
             continue
         if truncated_vars.get(var_name):
             lines.append(f"_{var_name}: long tail elided during shuffle; head only._")
+        if var_name == "field_error":
+            lines.extend(_render_field_error_block(var_name, counts))
+            continue
         largest = field_size_max if var_name == "field_name" else None
         samples = field_samples if var_name == "field_name" else None
         lines.extend(

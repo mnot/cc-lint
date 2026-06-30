@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Split a WARC paths file into N chunks and upload to an S3 prefix.
 
-Usage: python -m feed_survey.emr.split_paths <input> <s3-output-prefix> <n-tasks> [max-paths]
+Usage: python -m cc_lint.emr.split_paths <input> <s3-output-prefix> <n-tasks> [max-paths]
   input: local .txt/.gz file or s3:// path (requester-pays handled automatically)
   max-paths: optional global cap on the number of paths to upload
 """

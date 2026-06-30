@@ -141,8 +141,9 @@ def _process_single_warc(
                 linter = lint_record(record)
                 if not linter:
                     continue
+                base_uri = getattr(linter, "base_uri", None)
                 if top_sites_set is not None and not is_in_top_sites(
-                    linter.base_uri, top_sites_set
+                    base_uri, top_sites_set
                 ):
                     continue
                 stats.process_linter(linter)

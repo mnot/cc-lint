@@ -4,6 +4,7 @@ import zipfile
 from typing import Optional, Set
 from urllib.parse import urlparse
 
+import idna
 import requests
 
 TRANCO_URL = "https://tranco-list.eu/top-1m.csv.zip"
@@ -65,11 +66,13 @@ def load_top_sites(path: str, limit: int) -> Set[str]:
 def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
     """Normalize a URL or hostname to a comparable site key.
 
-    Lowercases, strips a leading "www." label, and returns just the host
-    portion. Returns None for empty/None input or any parse failure.
+    Lowercases, strips a leading "www." label, punycode-encodes
+    internationalized (non-ASCII) hosts, and returns just the host portion.
+    Returns None for empty/None input or any parse failure.
 
-    The result is the same shape as entries in the Tranco list (host form),
-    so it can be compared against top-sites sets directly.
+    The result is the same shape as entries in the Tranco list (host form,
+    IDN hosts in punycode), so it can be compared against top-sites sets
+    directly.
     """
     if not url_or_host:
         return None
@@ -83,6 +86,20 @@ def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
         host = host.lower()
         if host.startswith("www."):
             host = host[4:]
+        if not host.isascii():
+            # Tranco lists IDN hosts in punycode (xn--…). Encode so they match
+            # the top-sites set and don't split into a second HLL site key from
+            # their Unicode form. Use the idna package (IDNA2008/UTS-46), not
+            # the stdlib "idna" codec (IDNA2003): registries — and therefore
+            # Tranco's xn-- labels — follow IDNA2008, and the two disagree on a
+            # residual set (e.g. ß — IDNA2003 maps faß.de to fass.de, IDNA2008
+            # keeps it as xn--fa-hia.de). idna.IDNAError subclasses UnicodeError,
+            # so a malformed label is caught here and we keep the Unicode host
+            # rather than letting the outer handler drop the site.
+            try:
+                host = idna.encode(host, uts46=True).decode("ascii")
+            except UnicodeError:
+                pass
         return host
     except (ValueError, AttributeError, TypeError):
         # urlparse raises ValueError on malformed IPv6; AttributeError /
@@ -90,7 +107,7 @@ def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
         return None
 
 
-def is_in_top_sites(url_or_host: str, top_sites: Set[str]) -> bool:
+def is_in_top_sites(url_or_host: Optional[str], top_sites: Set[str]) -> bool:
     """Check if a URL's host (or the host string itself) is in ``top_sites``."""
     site = normalize_site(url_or_host)
     return site is not None and site in top_sites
