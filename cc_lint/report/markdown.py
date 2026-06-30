@@ -78,6 +78,28 @@ def _md_escape_pipe(value: str) -> str:
     return value.replace("|", "\\|")
 
 
+def _md_inline_code(value: str) -> str:
+    """Wrap a value in an inline code span that survives embedded backticks.
+
+    Untrusted on-the-wire header values can contain backticks; a plain
+    ``` `value` ``` span would terminate early at the first one. Per
+    CommonMark, delimit with a run of backticks one longer than the longest
+    run inside the value, padding with a space when it starts or ends with a
+    backtick.
+    """
+    longest = 0
+    current = 0
+    for char in value:
+        if char == "`":
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    fence = "`" * (longest + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value}{pad}{fence}"
+
+
 def _render_run_context(
     run_context: Dict[str, Any], finalized_at: Optional[str]
 ) -> List[str]:
@@ -166,10 +188,10 @@ def _render_value_samples(
         urls = [s for s in samples if s.get("url")]
         if not urls:
             continue
-        blocks.append(f"- `{_md_escape_pipe(val)}`")
+        blocks.append(f"- {_md_inline_code(val)}")
         for sample in urls:
             captured = sample.get("vars", {}).get("field_values")
-            suffix = f" — `{captured}`" if captured else ""
+            suffix = f" — {_md_inline_code(captured)}" if captured else ""
             blocks.append(f"  - {sample['url']}{suffix}")
     if not blocks:
         return []

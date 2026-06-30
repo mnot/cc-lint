@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
 from cc_lint.report import render_report
+from cc_lint.report.markdown import _md_inline_code
 
 SAMPLE_STATS = {
     "total_responses": 1234,
@@ -240,6 +241,43 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("bad token (5)", md)
         self.assertIn("trailing comma (2)", md)
         self.assertNotIn("cache-control: bad token", md)
+
+    def test_md_inline_code_survives_backticks(self) -> None:
+        # No backticks: single-backtick span.
+        self.assertEqual(_md_inline_code("require-corp"), "`require-corp`")
+        # Embedded backtick: fence must be longer than the longest run, so
+        # the value's backtick can't terminate the span early.
+        self.assertEqual(_md_inline_code("a`b"), "``a`b``")
+        self.assertEqual(_md_inline_code("a``b"), "```a``b```")
+        # Leading/trailing backtick needs space padding (CommonMark).
+        self.assertEqual(_md_inline_code("`x`"), "`` `x` ``")
+
+    def test_captured_value_with_backtick_renders_safely(self) -> None:
+        data = {
+            "total_responses": 10,
+            "field_counts": {"via": 10},
+            "unprocessed_counts": {},
+            "notes": {
+                "STRUCTURED_FIELD_PARSE_ERROR": {
+                    "count": 1,
+                    "samples": [],
+                    "vars": {"field_name": {"via": 1}},
+                    "var_samples": {
+                        "field_name": {
+                            "via": [
+                                {
+                                    "url": "http://bt.example/",
+                                    "vars": {"field_values": "weird`value"},
+                                }
+                            ]
+                        }
+                    },
+                }
+            },
+        }
+        _, md = self._render_both(data)
+        # The value surfaces inside a multi-backtick fence, not a broken span.
+        self.assertIn("``weird`value``", md)
 
     def test_sites_hll_surfaces(self) -> None:
         global_hll = make_registers(HLL_P_GLOBAL)
