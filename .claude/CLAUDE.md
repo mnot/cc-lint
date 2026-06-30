@@ -185,6 +185,7 @@ cc_lint/
   histograms.py        # bucket scales for numeric note vars
   hll.py               # HyperLogLog
   cooccur.py           # security-header co-occurrence + generic block machinery (#6)
+  cooccur_alphabet.toml # configurable co-occurrence header alphabet (#6/#28)
   note_cooccur.py      # note/finding co-occurrence: severity gate + lineage exclusion (#7)
   transition.py        # legacy/modern dual-emit pairs (transition tax, #11)
   top_sites.py         # Tranco filter + site normalisation

@@ -1,3 +1,4 @@
+import re
 from collections import Counter
 from typing import (
     Any,
@@ -151,8 +152,37 @@ SAMPLES_TO_COLLECT["VARY_COMPLEX"] = {
 }
 
 # Cap each captured header value so a single pathological header can't bloat
-# the report or the shuffle. Applied per value, before repr().
+# the report or the shuffle. Applied per value, after redaction, before repr().
 MAX_FIELD_VALUE_LEN = 300
+
+# Headers whose *value* is a credential in its entirety -- a session cookie, a
+# bearer token, an auth challenge. We still record that the note fired (the
+# sample keeps its URL + site), but never carry the on-the-wire value into the
+# report or the shuffle. Lowercased; matched against the field name. Issue #28.
+SENSITIVE_FIELD_NAMES: FrozenSet[str] = frozenset(
+    "set-cookie set-cookie2 cookie authorization proxy-authorization "
+    "www-authenticate proxy-authenticate".split()
+)
+
+# Query-string parameters whose value is a signature / token / key. A captured
+# header value can embed a signed URL (e.g. a `Reporting-Endpoints` endpoint
+# `https://.../reports?...&s=<sig>`); we redact the credential while keeping
+# the rest legible. Matched case-insensitively against `?name=`/`&name=`. #28.
+_SENSITIVE_QUERY_PARAMS: Tuple[str, ...] = tuple(
+    "signature sig s token access_token auth key apikey api_key hmac "
+    "x-amz-signature x-amz-security-token x-goog-signature".split()
+)
+_SIGNATURE_PARAM_RE = re.compile(
+    r"([?&](?:" + "|".join(re.escape(p) for p in _SENSITIVE_QUERY_PARAMS) + r")=)"
+    r"[^&\s]+",
+    re.IGNORECASE,
+)
+
+
+def _redact_sensitive_value(value: str) -> str:
+    """Redact signature/token query parameters embedded in a captured value."""
+    return _SIGNATURE_PARAM_RE.sub(r"\1[redacted]", value)
+
 
 # Distinct sites retained per (var, value) sample bucket. The collection side
 # (StatsCollector._collect_samples) and the reducer-side merge
@@ -237,14 +267,16 @@ def create_sample(
 
     note_vars: Dict[str, str] = {}
     if var_name and val_str:
-        if var_name == "field_name":
+        # Sensitive headers (cookies, auth) carry a secret as their whole
+        # value, so we never capture it -- the sample keeps its URL + site.
+        if var_name == "field_name" and val_str.lower() not in SENSITIVE_FIELD_NAMES:
             # Capture the offending header value(s) for context.
             target_field_name = val_str.lower()
             values = []
             for h_name, h_val in linter.headers.text:
                 h_name_str = str(h_name)
                 if h_name_str.lower() == target_field_name:
-                    h_val_str = str(h_val)
+                    h_val_str = _redact_sensitive_value(str(h_val))
                     if len(h_val_str) > MAX_FIELD_VALUE_LEN:
                         h_val_str = h_val_str[:MAX_FIELD_VALUE_LEN] + "…[truncated]"
                     values.append(h_val_str)

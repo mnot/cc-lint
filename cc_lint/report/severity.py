@@ -117,6 +117,14 @@ def possible_note_ids(severity_index: Dict[str, str]) -> Set[str]:
     return set(severity_index.keys())
 
 
+# Below this many analysed responses, the "Reachable but not triggered" list is
+# dominated by sample-size effects: notes that fire readily in a full crawl
+# (~123M responses) show as unseen purely because the sample is tiny. The
+# renderers surface a caveat below this threshold so a test report isn't
+# misread as "these checks never fire." See issue #28.
+MIN_RESPONSES_FOR_UNSEEN = 1_000_000
+
+
 # Notes whose firing paths in httplint are only reached when linting a request
 # (cc-lint feeds an HttpResponseLinter from WAT response metadata, so these
 # can never fire on our pipeline).

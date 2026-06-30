@@ -116,6 +116,7 @@ MRJOB_COMMON_ARGS = \
 	$(MRJOB_BOOTSTRAP_ARGS) \
 	--files "$(TRANCO_CACHE)\#top-1m-sites.csv" \
 	--files "cc_lint/fingerprints.toml\#fingerprints.toml" \
+	--files "cc_lint/cooccur_alphabet.toml\#cooccur_alphabet.toml" \
 	$(IPASN_ARGS) \
 	--cleanup $(MRJOB_CLEANUP) \
 	--no-read-logs --no-cat-output \

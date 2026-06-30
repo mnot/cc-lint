@@ -231,6 +231,29 @@ def load_fingerprinter(path: Optional[str] = None) -> Fingerprinter:
 UNMATCHED = "__unmatched__"
 
 
+# Seed map of well-known Autonomous Systems to their operator, for the
+# top-networks (ASN) report (issue #28). Most high-traffic ASNs are cloud /
+# transit networks that carry no CDN fingerprint, so without this the Layer
+# column is blank for the biggest rows and the section is illegible. The
+# operator (who owns the network) and the header-derived Layer (what software
+# fronted the response) are complementary: a generic AWS/GCP ASN with no CDN
+# fingerprint is itself informative. Hand-curated and deliberately small;
+# extend as new big networks show up unlabelled in a run.
+ASN_OPERATORS: Dict[int, str] = {
+    16509: "Amazon (AWS)",
+    14618: "Amazon (AWS)",
+    15169: "Google",
+    8075: "Microsoft",
+    3356: "Lumen (Level 3)",
+    16276: "OVH",
+    24940: "Hetzner",
+    14061: "DigitalOcean",
+    13335: "Cloudflare",
+    20940: "Akamai",
+    54113: "Fastly",
+}
+
+
 @lru_cache(maxsize=1)
 def default_fingerprinter() -> Fingerprinter:
     """The packaged fingerprint table, loaded once per process.

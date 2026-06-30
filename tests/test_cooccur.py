@@ -1,5 +1,7 @@
 """Tests for cc_lint.cooccur normalisation, merging, trimming, derivation."""
 
+import os
+import tempfile
 import unittest
 from typing import Any, Dict
 
@@ -7,8 +9,10 @@ from cc_lint.cooccur import (
     EMPTY_BUNDLE_LABEL,
     bundle_key,
     conditional_lifts,
+    default_security_headers,
     empty_bundle_count,
     layer_default_bundles,
+    load_security_headers,
     merge_cooccur,
     pair_keys,
     present_security_headers,
@@ -174,6 +178,45 @@ class TestDerivation(unittest.TestCase):
         self.assertEqual(by_layer["nginx"]["bundle"], EMPTY_BUNDLE_LABEL)
         self.assertEqual(by_layer["nginx"]["responses"], 3)
         self.assertAlmostEqual(by_layer["nginx"]["share"], 2 / 3)
+
+
+class TestAlphabetLoading(unittest.TestCase):
+    """The co-occurrence alphabet is loaded from TOML, configurable (#28)."""
+
+    def _write_toml(self, body: str) -> str:
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".toml", delete=False, encoding="utf-8"
+        )
+        handle.write(body)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_packaged_default_is_the_security_posture_set(self) -> None:
+        headers = default_security_headers()
+        self.assertIn("strict-transport-security", headers)
+        self.assertIn("nel", headers)
+        # present_security_headers reads the same loaded alphabet.
+        self.assertEqual(present_security_headers(["nel", "date"]), ["nel"])
+
+    def test_override_lowercases_and_dedupes_preserving_order(self) -> None:
+        path = self._write_toml('headers = ["X-Foo", "x-bar", "x-foo"]\n')
+        self.assertEqual(load_security_headers(path), ("x-foo", "x-bar"))
+
+    def test_empty_alphabet_rejected(self) -> None:
+        path = self._write_toml("headers = []\n")
+        with self.assertRaises(ValueError):
+            load_security_headers(path)
+
+    def test_non_string_entries_rejected(self) -> None:
+        path = self._write_toml("headers = [1, 2]\n")
+        with self.assertRaises(ValueError):
+            load_security_headers(path)
+
+    def test_missing_headers_key_rejected(self) -> None:
+        path = self._write_toml("other = 1\n")
+        with self.assertRaises(ValueError):
+            load_security_headers(path)
 
 
 if __name__ == "__main__":
