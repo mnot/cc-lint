@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-30T00:56:56Z",
+  "title": "Design System: Common Crawl Response Lint",
+  "extensions": {
+    "colorMeta": {
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#1c1c1c", "tonalRamp": ["#0f1115", "#1c1c1c", "#2a2d33", "#3f434a", "#5f6168", "#9aa0a6", "#c8cacd", "#e7e8ea"] },
+      "canvas": { "role": "neutral", "displayName": "Canvas", "canonical": "#fafafa", "tonalRamp": ["#0f1115", "#16181d", "#22252b", "#383b42", "#5f6168", "#c8c8c8", "#ececec", "#fafafa"] },
+      "surface": { "role": "neutral", "displayName": "Surface", "canonical": "#ffffff", "tonalRamp": ["#16181d", "#1a1c22", "#2a2d33", "#5f6168", "#9aa0a6", "#e7e7ea", "#f5f5f7", "#ffffff"] },
+      "muted": { "role": "neutral", "displayName": "Muted", "canonical": "#5f6168", "tonalRamp": ["#26282c", "#3a3c41", "#4d4f54", "#5f6168", "#7c7f86", "#9aa0a6", "#bcc0c5", "#dcdee1"] },
+      "link": { "role": "primary", "displayName": "Reference Blue", "canonical": "#1f4ed8", "tonalRamp": ["#0e2566", "#163a99", "#1f4ed8", "#3f6ae6", "#6e8eef", "#8ab4ff", "#b6cdff", "#dde7ff"] },
+      "bad-fg": { "role": "secondary", "displayName": "Bad / Error Red", "canonical": "#a31515", "tonalRamp": ["#3d0808", "#5a2828", "#7d1010", "#a31515", "#c54a4a", "#e9a0a0", "#fdecec", "#fff5f5"] },
+      "warn-fg": { "role": "secondary", "displayName": "Warn / Caution Amber", "canonical": "#8a5400", "tonalRamp": ["#2a1a00", "#5b4626", "#6e4200", "#8a5400", "#b87f1a", "#f0c356", "#fff0bf", "#fff8e1"] },
+      "info-fg": { "role": "secondary", "displayName": "Info Blue", "canonical": "#1b4079", "tonalRamp": ["#0c1f3d", "#142f5a", "#1b4079", "#2c5a9e", "#5a83bd", "#b6c9e3", "#e7f0fb", "#f3f8ff"] },
+      "good-fg": { "role": "secondary", "displayName": "Good / Positive Green", "canonical": "#1e7c3a", "tonalRamp": ["#0a2e16", "#16291e", "#155c2a", "#1e7c3a", "#46a463", "#aed4ba", "#e6f4ea", "#f2faf5"] },
+      "clean-fg": { "role": "secondary", "displayName": "Clean / Neutral Gray", "canonical": "#555555", "tonalRamp": ["#1c1e23", "#2f3136", "#42454a", "#555555", "#888888", "#c8c8c8", "#ececec", "#f6f6f6"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The single page title (h1). One per report." },
+      "headline": { "displayName": "Headline", "purpose": "Section headings (h2) with a 1px bottom rule." },
+      "title": { "displayName": "Title", "purpose": "Sub-sections and category group headings (h3)." },
+      "body": { "displayName": "Body", "purpose": "All prose and table cells; page capped at 64rem." },
+      "label": { "displayName": "Label", "purpose": "Sub-headers (h4) and table column heads; uppercase, muted, functional." },
+      "mono": { "displayName": "Mono", "purpose": "Machine literals only: note IDs, header names, raw sample values." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "marker-rotate", "value": "transform 0.15s", "purpose": "Note-card disclosure marker (▸) rotates 90° on open." },
+      { "name": "marker-rotate-reduced", "value": "none", "purpose": "Honor prefers-reduced-motion: the rotation is inessential and may be dropped." }
+    ],
+    "breakpoints": [
+      { "name": "stat-grid", "value": "minmax(12rem, 1fr)", "purpose": "Header stat tiles reflow via auto-fit minmax, not media queries." },
+      { "name": "page-max", "value": "64rem", "purpose": "Body max-width; lines stay readable without a breakpoint system." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Severity Badge",
+      "kind": "chip",
+      "refersTo": "badge-bad",
+      "description": "Small uppercase chip naming an HTTP note's classification. Five variants: bad / warn / info / good / clean.",
+      "html": "<span class=\"ds-badge ds-badge-bad\">BAD</span> <span class=\"ds-badge ds-badge-warn\">WARN</span> <span class=\"ds-badge ds-badge-info\">INFO</span> <span class=\"ds-badge ds-badge-good\">GOOD</span> <span class=\"ds-badge ds-badge-clean\">CLEAN</span>",
+      "css": ".ds-badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 4px; font: 600 0.7rem/1.25 system-ui, sans-serif; letter-spacing: 0.04em; border: 1px solid; } .ds-badge-bad { background: #fdecec; color: #a31515; border-color: #e9a0a0; } .ds-badge-warn { background: #fff8e1; color: #8a5400; border-color: #f0c356; } .ds-badge-info { background: #e7f0fb; color: #1b4079; border-color: #b6c9e3; } .ds-badge-good { background: #e6f4ea; color: #1e7c3a; border-color: #aed4ba; } .ds-badge-clean { background: #ececec; color: #555555; border-color: #c8c8c8; }"
+    },
+    {
+      "name": "Note Card",
+      "kind": "card",
+      "refersTo": "note-card",
+      "description": "Native details/summary disclosure per HTTP note. The 4px left edge encodes severity classification, not decoration.",
+      "html": "<details class=\"ds-note ds-note-bad\" open><summary><span class=\"ds-badge ds-badge-bad\">BAD</span><span class=\"ds-note-id\">cache_control_syntax</span><span class=\"ds-note-sites\">~1.2M sites</span><span class=\"ds-note-count\">8,431,902</span></summary><div class=\"ds-note-body\">Malformed Cache-Control directive observed in responses.</div></details>",
+      "css": ".ds-note { background: #ffffff; border: 1px solid #e7e7ea; border-left: 4px solid #e9a0a0; border-radius: 6px; color: #1c1c1c; font: 400 15px/1.5 system-ui, sans-serif; } .ds-note > summary { cursor: pointer; padding: 0.5rem 0.75rem; display: flex; align-items: center; gap: 0.5rem; list-style: none; } .ds-note > summary::-webkit-details-marker { display: none; } .ds-note > summary::before { content: \"\\25b8\"; color: #5f6168; transition: transform 0.15s; } .ds-note[open] > summary::before { transform: rotate(90deg); display: inline-block; } .ds-note-id { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.9em; } .ds-note-sites { background: #f5f5f7; border: 1px solid #e7e7ea; border-radius: 4px; color: #5f6168; font-size: 0.75em; padding: 0.05rem 0.35rem; font-variant-numeric: tabular-nums; } .ds-note-count { margin-left: auto; color: #5f6168; font-variant-numeric: tabular-nums; } .ds-note-body { padding: 0.25rem 0.75rem 0.75rem; }"
+    },
+    {
+      "name": "Run-Context Pill",
+      "kind": "chip",
+      "refersTo": "run-pill",
+      "description": "Rounded-full chip carrying run metadata (label + tabular value). Warning variant flags a capped run.",
+      "html": "<span class=\"ds-pill\"><span class=\"ds-pill-label\">Crawl</span><span class=\"ds-pill-value\">CC-MAIN-2026-12</span></span> <span class=\"ds-pill ds-pill-warning\"><span class=\"ds-pill-label\">Records / WARC</span><span class=\"ds-pill-value\">5,000</span></span>",
+      "css": ".ds-pill { background: #ffffff; border: 1px solid #e7e7ea; border-radius: 999px; padding: 0.15rem 0.65rem; display: inline-flex; align-items: baseline; gap: 0.4rem; font-size: 0.82rem; color: #1c1c1c; } .ds-pill-label { color: #5f6168; font-size: 0.9em; } .ds-pill-value { font-weight: 600; font-variant-numeric: tabular-nums; } .ds-pill-warning { background: #fff8e1; border-color: #f0c356; color: #8a5400; }"
+    },
+    {
+      "name": "Stat Tile",
+      "kind": "card",
+      "refersTo": "stat-card",
+      "description": "Plain header summary tile: muted uppercase label over a value. Deliberately NOT a hero metric.",
+      "html": "<div class=\"ds-stat\"><dt>Responses analyzed</dt><dd>123,418,902</dd></div>",
+      "css": ".ds-stat { background: #ffffff; border: 1px solid #e7e7ea; border-radius: 8px; padding: 0.75rem 1rem; } .ds-stat dt { font-size: 0.8em; color: #5f6168; text-transform: uppercase; letter-spacing: 0.04em; } .ds-stat dd { margin: 0.25rem 0 0; font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Health Bar",
+      "kind": "custom",
+      "refersTo": "health-bar",
+      "description": "Single horizontal stacked bar showing the severity mix at a glance. A proportion strip, not a gauge.",
+      "html": "<div class=\"ds-health\"><span class=\"ds-health-seg\" style=\"width:22%;background:#a31515\"></span><span class=\"ds-health-seg\" style=\"width:31%;background:#8a5400\"></span><span class=\"ds-health-seg\" style=\"width:14%;background:#1b4079\"></span><span class=\"ds-health-seg\" style=\"width:18%;background:#1e7c3a\"></span><span class=\"ds-health-seg\" style=\"width:15%;background:#555555\"></span></div>",
+      "css": ".ds-health { display: flex; width: 100%; height: 1.5rem; border-radius: 0.25rem; overflow: hidden; border: 1px solid #e7e7ea; } .ds-health-seg { display: block; height: 100%; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lab Notebook",
+    "overview": "This is the rendered output of an instrument, not a product. ~123M HTTP responses go in; a ranked, scannable account of what they got right and wrong comes out. The design serves that reading the way a well-kept lab notebook serves an experiment: every figure carries its denominator, every elided long tail is annotated where it was cut, and the apparatus (shuffle caps, HLL estimates, top-K trims) is recorded in the margin rather than hidden. The page is flat by construction — not a single box-shadow — with depth carried by 1px borders, tonal row striping, and a restrained type scale. The one identity move is the five-level severity palette (bad / warn / info / good / clean), reading as clinical signal: precise instrument-panel readouts that rank and group, never alarm. It rejects the SaaS dashboard and the security-scanner scare sheet alike.",
+    "keyCharacteristics": [
+      "Flat by construction — borders and tonal layering, zero shadows.",
+      "Density earned and spent on signal, never on decoration.",
+      "Severity as a sorting channel, carried by text + order as well as hue.",
+      "Honest apparatus: denominators, exclusions, and truncation always visible.",
+      "Dual-theme parity; system-ui type; tabular numerics throughout."
+    ],
+    "rules": [
+      { "name": "The Meaning-Only Saturation Rule", "body": "Saturated color is reserved for the functional blue and the five severity levels. Nothing decorative is allowed to be colorful. If a color appears, it classifies something.", "section": "colors" },
+      { "name": "The Recede-on-Clean Rule", "body": "The further a finding is from 'error', the quieter its color. Clean is gray on purpose; it must never compete with Bad for the eye.", "section": "colors" },
+      { "name": "The System-Font Rule", "body": "No web fonts, ever. The report renders in the reader's own UI font so it reads as an instrument's output. A loaded display face would make it a brochure.", "section": "typography" },
+      { "name": "The Mono-Means-Literal Rule", "body": "Monospace is reserved for machine literals (IDs, header names, raw values). Never use it for emphasis or headings.", "section": "typography" },
+      { "name": "The No-Shadow Rule", "body": "box-shadow is forbidden. If a surface needs to read as distinct, give it a border or a tonal step, not a shadow. If something looks like it's floating, the design has failed.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep the system flat — convey depth with 1px Border, the Canvas→Surface→Row-Alt tonal steps, and header underlines only.",
+      "Do reserve saturated color for the functional blue and the five severity levels; if a color appears, it must classify something.",
+      "Do carry severity in text and sort order, not hue alone, so the scale survives color-blindness and grayscale printing.",
+      "Do render figures with font-variant-numeric: tabular-nums and keep every aggregate's denominator and exclusions visible.",
+      "Do verify contrast in both light and dark schemes whenever you touch the palette: body ≥4.5:1, badges/segments ≥3:1 against their own ground.",
+      "Do use native details, table, and heading hierarchy; keep new sections semantic.",
+      "Do keep the report's HTML and Markdown twins in parity — a finding in one exists in the other."
+    ],
+    "donts": [
+      "Don't build a SaaS dashboard: no hero-metric KPI cards, gauges, sparkline theater, or vanity numbers. The stat grid stays plain.",
+      "Don't build a security-scanner scare sheet: no red-everywhere alarmism, no letter grades, no naming-and-shaming sites. Measured over loud.",
+      "Don't add box-shadow anywhere. If a surface looks like it's floating, it's wrong.",
+      "Don't introduce a web font or a second proportional face; use monospace only for machine literals.",
+      "Don't use a colored border-left as decoration. The only sanctioned one is the 4px severity edge on note cards, and it encodes classification.",
+      "Don't let Clean compete with Bad for attention; the gray-on-purpose Clean level must recede.",
+      "Don't let the apparatus (shuffle caps, top-K trims, HLL math) become a headline; record it in the margin as a Muted footnote."
+    ]
+  }
+}

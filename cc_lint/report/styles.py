@@ -165,7 +165,7 @@ STYLE = """
   ul.errors .err { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
   details.field-samples { margin: .35rem 0 0; }
-  details.field-samples > summary { cursor: pointer; color: var(--muted); font-size: .85em; }
+  details.field-samples > summary { cursor: pointer; color: var(--muted); font-size: .85em; padding: .35rem 0; }
   .field-val {
     display: block;
     margin-left: 1.5em;
@@ -197,20 +197,33 @@ STYLE = """
   }
   table.var-table tbody tr:nth-child(odd) { background: var(--row-alt); }
 
-  .note-summary { margin: .25rem 0 .75rem; color: var(--fg); font-style: italic; }
+  .note-summary { margin: .25rem 0 .75rem; max-width: 72ch; color: var(--fg); font-style: italic; }
   details.note-samples { margin: .25rem 0 .75rem; }
-  details.note-samples > summary { cursor: pointer; color: var(--muted); font-size: .9em; }
+  details.note-samples > summary { cursor: pointer; color: var(--muted); font-size: .9em; padding: .35rem 0; }
 
   .missing-list { columns: 2 14rem; column-gap: 1.25rem; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .85em; }
   .missing-list li { break-inside: avoid; }
 
   .truncated {
     background: var(--warn-bg);
-    border-left: 3px solid var(--warn-border);
+    border: 1px solid var(--warn-border);
     color: var(--warn-fg);
     margin: .5rem 0;
     padding: .35rem .6rem;
-    border-radius: 0 .25rem .25rem 0;
+    border-radius: .25rem;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 
   section.run-context { margin-top: 1rem; }
@@ -236,7 +249,7 @@ STYLE = """
     color: var(--muted);
     font-size: .85em;
     margin: 0 0 .5rem;
-    max-width: 56rem;
+    max-width: 72ch;
   }
 
   table.csp-table td:last-child { width: 220px; }
@@ -281,4 +294,17 @@ STYLE = """
 
   section { margin-top: 2.5rem; }
   section:first-of-type { margin-top: 0; }
+
+  /* Narrow viewports: let wide tables scroll inside themselves rather than
+     forcing the whole page to scroll horizontally. */
+  @media (max-width: 40rem) {
+    table.var-table, table.data-table, table.csp-table {
+      display: block;
+      overflow-x: auto;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    details.note > summary::before { transition: none; }
+  }
 """
