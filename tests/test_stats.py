@@ -37,6 +37,34 @@ class _InfoNote(Note):
     text = ""
 
 
+class _WarnA(Note):
+    category = categories.GENERAL
+    level = levels.WARN
+    summary = ""
+    text = ""
+
+
+class _WarnB(Note):
+    category = categories.GENERAL
+    level = levels.WARN
+    summary = ""
+    text = ""
+
+
+class _WarnC(Note):
+    category = categories.GENERAL
+    level = levels.WARN
+    summary = ""
+    text = ""
+
+
+class _BadNote(Note):
+    category = categories.GENERAL
+    level = levels.BAD
+    summary = ""
+    text = ""
+
+
 def _linter_for(url: str) -> HttpResponseLinter:
     linter = HttpResponseLinter()
     linter.base_uri = url
@@ -601,6 +629,85 @@ class TestHeaderByteEconomics(unittest.TestCase):
         data = stats.to_dict()
         self.assertEqual(data["header_block_hist"], {"<256 B": 3})
         self.assertEqual(data["total_header_bytes"], 3 * self._line_bytes("server", "nginx"))
+
+
+class TestNoteCooccur(unittest.TestCase):
+    """Note (finding) co-occurrence tabulation, issue #7."""
+
+    def test_defect_gate_bundles_marginals_pairs(self) -> None:
+        # Two defect notes (WARN) plus an INFO note on one response. Only the
+        # defects join the bundle; INFO is gated out. A second response with
+        # one of the defects exercises the per-response marginal count.
+        stats = StatsCollector()
+        first = _linter_for("http://a.example/")
+        _attach_note(first, _WarnA("s"))
+        _attach_note(first, _WarnB("s"))
+        _attach_note(first, _InfoNote("s"))
+        stats.process_linter(first)
+        second = _linter_for("http://b.example/")
+        _attach_note(second, _WarnA("s"))
+        stats.process_linter(second)
+
+        nc = stats.to_dict()["note_cooccur"]
+        self.assertEqual(nc["responses"], 2)
+        # The cluster is the sorted defect set; INFO is absent.
+        self.assertEqual(nc["bundles"]["occ"]["_WarnA, _WarnB"], 1)
+        self.assertEqual(nc["bundles"]["occ"]["_WarnA"], 1)
+        self.assertNotIn("_InfoNote", nc["marginals"]["occ"])
+        # Marginals count responses, not occurrences.
+        self.assertEqual(nc["marginals"]["occ"], {"_WarnA": 2, "_WarnB": 1})
+        # The two defects co-occur once as a (non-lineage) pair.
+        self.assertEqual(nc["pairs"]["occ"], {"_WarnA, _WarnB": 1})
+
+    def test_empty_bundle_when_no_defect_fires(self) -> None:
+        # A response whose only finding is INFO produces the empty cluster.
+        stats = StatsCollector()
+        linter = _linter_for("http://a.example/")
+        _attach_note(linter, _InfoNote("s"))
+        stats.process_linter(linter)
+        nc = stats.to_dict()["note_cooccur"]
+        self.assertEqual(nc["bundles"]["occ"], {"(none)": 1})
+        self.assertEqual(nc["marginals"]["occ"], {})
+        self.assertEqual(nc["pairs"]["occ"], {})
+
+    def test_parent_child_pair_excluded_siblings_kept(self) -> None:
+        # _WarnA (parent) with a _WarnB child, plus a top-level _WarnC. The
+        # mechanical parent/child pair is dropped; the genuine cross pairs
+        # involving the sibling are kept.
+        stats = StatsCollector()
+        linter = _linter_for("http://a.example/")
+        parent: Any = _WarnA("s")
+        parent.add_child(_WarnB)
+        _attach_note(linter, parent)
+        _attach_note(linter, _WarnC("s"))
+        stats.process_linter(linter)
+
+        pairs = stats.to_dict()["note_cooccur"]["pairs"]["occ"]
+        self.assertNotIn("_WarnA, _WarnB", pairs)
+        self.assertEqual(pairs.get("_WarnA, _WarnC"), 1)
+        self.assertEqual(pairs.get("_WarnB, _WarnC"), 1)
+        # All three still appear in the cluster and marginals.
+        self.assertEqual(
+            stats.to_dict()["note_cooccur"]["bundles"]["occ"],
+            {"_WarnA, _WarnB, _WarnC": 1},
+        )
+
+    def test_lineage_excluded_across_gated_intermediate(self) -> None:
+        # _WarnA → _InfoNote (gated out) → _BadNote. The ancestry must thread
+        # through the excluded INFO note, so the surviving defect pair
+        # (_WarnA, _BadNote) is still recognised as mechanical and dropped --
+        # the exclusion is structural, regardless of severity in between.
+        stats = StatsCollector()
+        linter = _linter_for("http://a.example/")
+        parent: Any = _WarnA("s")
+        info_child = parent.add_child(_InfoNote)
+        info_child.add_child(_BadNote)
+        _attach_note(linter, parent)
+        stats.process_linter(linter)
+
+        nc = stats.to_dict()["note_cooccur"]
+        self.assertEqual(nc["bundles"]["occ"], {"_BadNote, _WarnA": 1})
+        self.assertEqual(nc["pairs"]["occ"], {})
 
 
 if __name__ == "__main__":

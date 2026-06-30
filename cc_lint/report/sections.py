@@ -1497,11 +1497,14 @@ def _bundle_label_html(bundle: str) -> str:
 
 
 def _render_bundle_table(
-    bundles: List[Tuple[str, int]], hlls: Dict[str, Any], denom: int
+    bundles: List[Tuple[str, int]],
+    hlls: Dict[str, Any],
+    denom: int,
+    noun: str = "bundle",
 ) -> str:
     if not bundles:
         return '<p class="muted">No data.</p>'
-    head = ["Bundle", "Responses", "% of responses", "Sites"]
+    head = [noun.capitalize(), "Responses", "% of responses", "Sites"]
     header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
     rows: List[str] = []
     for bundle, count in bundles[:25]:
@@ -1516,7 +1519,7 @@ def _render_bundle_table(
     if len(bundles) > 25:
         rows.append(
             f'<tr><td colspan="{len(head)}" class="muted">'
-            f"… {len(bundles) - 25} more bundles not shown …</td></tr>"
+            f"… {len(bundles) - 25} more {noun}s not shown …</td></tr>"
         )
     return (
         '<table class="data-table">'
@@ -1618,10 +1621,10 @@ def _render_marginal_prevalence(
     )
 
 
-def _render_lift_table(lifts: List[Dict[str, Any]]) -> str:
+def _render_lift_table(lifts: List[Dict[str, Any]], noun: str = "Header") -> str:
     if not lifts:
         return '<p class="muted">No co-occurring pairs observed.</p>'
-    head = ["Header A", "Header B", "Co-occurrences", "P(A|B)", "P(B|A)", "Lift"]
+    head = [f"{noun} A", f"{noun} B", "Co-occurrences", "P(A|B)", "P(B|A)", "Lift"]
     header = "".join(f"<th>{html.escape(h)}</th>" for h in head)
     rows: List[str] = []
     for row in lifts:
@@ -1728,6 +1731,61 @@ def render_cooccur_section(cooccur: Dict[str, Any], roles: Dict[str, str]) -> st
     return (
         '<section id="cooccur">'
         "<h2>Header co-occurrence</h2>"
+        f"{''.join(blocks)}"
+        "</section>"
+    )
+
+
+def render_note_cooccur_section(note_cooccur: Dict[str, Any]) -> str:
+    """Render the note (finding) co-occurrence section (issue #7)."""
+    if not note_cooccur:
+        return ""
+    denom = int(note_cooccur.get("responses", 0))
+    if denom <= 0:
+        return ""
+    bundles_dict: Dict[str, Any] = note_cooccur.get("bundles") or {}
+    bundle_hlls: Dict[str, Any] = bundles_dict.get("hlls", {})
+
+    none_count = empty_bundle_count(note_cooccur)
+    blocks: List[str] = [
+        '<p class="muted">Which findings clump on the same response &mdash; '
+        "testing whether defects cluster rather than scatter. A "
+        "<strong>cluster</strong> is the set of defect notes "
+        "(<code>bad</code> / <code>warn</code>) that fired on a response; "
+        f"<em>{html.escape(EMPTY_BUNDLE_LABEL)}</em> means none did. Mechanical "
+        "parent/child note pairs (a sub-finding always co-occurs with its "
+        "parent) are excluded from the pairs below. <em>Responses</em> is "
+        "occurrence-weighted; <em>Sites</em> is a HyperLogLog estimate of "
+        f"distinct operators. Shares are of all {_format_count(denom)} analysed "
+        "responses.</p>",
+        '<p class="cooccur-headline">'
+        f"<strong>{_cooccur_pct(none_count, denom)}</strong> of responses "
+        f"({_format_count(none_count)}) produced <strong>no</strong> "
+        "<code>bad</code>/<code>warn</code> finding.</p>",
+        "<h3>Top finding clusters</h3>",
+    ]
+    if note_cooccur.get("bundles_truncated"):
+        blocks.append(TRUNCATED_NOTE)
+    blocks.append(
+        _render_bundle_table(
+            ranked_bundles(note_cooccur), bundle_hlls, denom, noun="cluster"
+        )
+    )
+    blocks.append(
+        "<h3>Conditional lifts</h3>"
+        '<p class="muted">For the most common co-occurring finding pairs: '
+        "<code>P(A|B)</code> is the share of responses with finding B that "
+        "also carry A. <strong>Lift</strong> &gt; 1 means the two fire "
+        "together more than independent prevalence predicts &mdash; the "
+        "clumping signal.</p>"
+    )
+    blocks.append(
+        _render_lift_table(conditional_lifts(note_cooccur, 25), noun="Finding")
+    )
+
+    return (
+        '<section id="note-cooccur">'
+        "<h2>Finding co-occurrence</h2>"
         f"{''.join(blocks)}"
         "</section>"
     )

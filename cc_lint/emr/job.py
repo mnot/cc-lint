@@ -239,6 +239,9 @@ def merge_stats_dict(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     src_cooccur = source.get("cooccur")
     if src_cooccur:
         merge_cooccur(target.setdefault("cooccur", {}), src_cooccur)
+    src_note_cooccur = source.get("note_cooccur")
+    if src_note_cooccur:
+        merge_cooccur(target.setdefault("note_cooccur", {}), src_note_cooccur)
     src_transition = source.get("transition")
     if src_transition:
         merge_transition(target.setdefault("transition", {}), src_transition)
@@ -251,6 +254,7 @@ VARY_KEY = "vary"
 CACHE_CONTROL_KEY = "cache_control"
 VALUE_HISTOGRAMS_KEY = "value_histograms"
 COOCCUR_KEY = "cooccur"
+NOTE_COOCCUR_KEY = "note_cooccur"
 TRANSITION_KEY = "transition"
 
 # Defensive cap on the per-site CSP-size dict. The dict naturally bounds at
@@ -464,6 +468,8 @@ def trim_stats_dict(stats: Dict[str, Any]) -> Dict[str, Any]:
         trim_cache_control(stats["cache_control"], TOP_K_RECIPES)
     if stats.get("cooccur"):
         trim_cooccur(stats["cooccur"], TOP_K_RECIPES)
+    if stats.get("note_cooccur"):
+        trim_cooccur(stats["note_cooccur"], TOP_K_RECIPES)
     for note in stats.get("notes", {}).values():
         var_counts = note.get("vars", {})
         retained_vals_per_var: Dict[str, set[str]] = {}
@@ -784,6 +790,9 @@ class CCLintJob(MRJob):  # type: ignore[misc]
         cooccur = stats.get("cooccur") or {}
         if cooccur:
             yield COOCCUR_KEY, cooccur
+        note_cooccur = stats.get("note_cooccur") or {}
+        if note_cooccur:
+            yield NOTE_COOCCUR_KEY, note_cooccur
         transition = stats.get("transition") or {}
         if transition:
             yield TRANSITION_KEY, transition
@@ -833,6 +842,12 @@ class CCLintJob(MRJob):  # type: ignore[misc]
                 merge_cooccur(merged_cooccur, value)
             trim_cooccur(merged_cooccur, TOP_K_RECIPES)
             yield COOCCUR_KEY, merged_cooccur
+        elif key == NOTE_COOCCUR_KEY:
+            merged_note_cooccur: Dict[str, Any] = {}
+            for value in values:
+                merge_cooccur(merged_note_cooccur, value)
+            trim_cooccur(merged_note_cooccur, TOP_K_RECIPES)
+            yield NOTE_COOCCUR_KEY, merged_note_cooccur
         elif key == TRANSITION_KEY:
             # Bounded key space (pairs x 4), so no trim -- just fold and emit.
             merged_transition: Dict[str, Any] = {}

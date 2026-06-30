@@ -1,5 +1,16 @@
 from collections import Counter
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+)
 
 from httplint.field.finder import UnknownHttpField
 from httplint.message import HttpResponseLinter
@@ -19,6 +30,11 @@ from cc_lint.hll import (
     make_registers,
 )
 from cc_lint.ipasn import IpAsnTable
+from cc_lint.note_cooccur import (
+    NOTE_COOCCUR_SEVERITIES,
+    note_bundle_key,
+    note_pair_keys,
+)
 from cc_lint.recipes import RecipeStats, recipe_key
 from cc_lint.top_sites import normalize_site
 from cc_lint.transition import (
@@ -493,6 +509,18 @@ class StatsCollector:
         self.cooccur_marginals = RecipeStats(HLL_P_PER_NOTE)
         self.cooccur_pairs = RecipeStats(HLL_P_RECIPE)
         self.cooccur_by_layer: Dict[str, Counter[str]] = {}
+        # Note co-occurrence (issue #7). The same bounded co-occurrence
+        # component as the header view above, pointed at note ids: a bundle is
+        # the set of defect notes (bad/warn, see NOTE_COOCCUR_SEVERITIES) that
+        # fired on a response; pairs drop mechanical parent/child correlations
+        # (issue #5). Bundles and pairs multiply by the fired-set cardinality,
+        # so their site HLLs use the coarse HLL_P_RECIPE; the per-note marginals
+        # are bounded (<= the note alphabet) and carry the conditional-lift
+        # denominators, so they keep HLL_P_PER_NOTE. No by_layer dimension --
+        # #7 tests defect clumping, not infra defaulting. See cc_lint.note_cooccur.
+        self.note_cooccur_bundles = RecipeStats(HLL_P_RECIPE)
+        self.note_cooccur_marginals = RecipeStats(HLL_P_PER_NOTE)
+        self.note_cooccur_pairs = RecipeStats(HLL_P_RECIPE)
         # Legacy/modern dual-emit pairs (issue #11). Every response is binned
         # into one of four buckets per configured pair (both / modern-only /
         # legacy-only / neither). The key space is bounded by pairs x 4, so a
@@ -548,6 +576,7 @@ class StatsCollector:
         self._process_cache_control(linter, site)
         self._process_value_histograms(linter)
         self._process_cooccur(header_items, site, layers)
+        self._process_note_cooccur(linter, site)
         self._process_transition(linter, header_items, site)
 
     def _process_value_histograms(self, linter: HttpResponseLinter) -> None:
@@ -641,6 +670,47 @@ class StatsCollector:
             per_layer = self.cooccur_by_layer.setdefault(bundle, Counter())
             for layer in layers:
                 per_layer[layer] += 1
+
+    def _process_note_cooccur(
+        self, linter: HttpResponseLinter, site: Optional[str]
+    ) -> None:
+        """Tabulate defect-note co-occurrence for one response (issue #7).
+
+        Walks the response's note tree once, threading structural ancestry
+        through *every* node (regardless of severity) so a deeper
+        ancestor/descendant pair is still recognised across an
+        excluded-severity note. Only notes whose severity is in
+        ``NOTE_COOCCUR_SEVERITIES`` join the fired set; pairs in an
+        ancestor/descendant relationship are dropped as mechanical (issue #5).
+        Every response contributes exactly one bundle (``(none)`` when no
+        defect note fired), so the per-occurrence denominator is
+        ``total_responses`` (read back in ``to_dict``).
+        """
+        fired: Set[str] = set()
+        lineage: Set[FrozenSet[str]] = set()
+
+        def walk(notes: Iterable[Note], ancestors: Tuple[str, ...]) -> None:
+            for note in notes:
+                note_id = note.__class__.__name__
+                severity = _level_to_severity(getattr(note, "level", None))
+                included = severity in NOTE_COOCCUR_SEVERITIES
+                if included:
+                    fired.add(note_id)
+                    for ancestor in ancestors:
+                        if ancestor != note_id:
+                            lineage.add(frozenset((ancestor, note_id)))
+                subnotes = getattr(note, "subnotes", None)
+                if subnotes:
+                    next_ancestors = ancestors + (note_id,) if included else ancestors
+                    walk(subnotes, next_ancestors)
+
+        walk(linter.notes, ())
+
+        self.note_cooccur_bundles.add(note_bundle_key(fired), site)
+        for note_id in fired:
+            self.note_cooccur_marginals.add(note_id, site)
+        for pair in note_pair_keys(fired, lineage):
+            self.note_cooccur_pairs.add(pair, site)
 
     def _process_transition(
         self,
@@ -869,6 +939,12 @@ class StatsCollector:
                     bundle: dict(layers)
                     for bundle, layers in self.cooccur_by_layer.items()
                 },
+            }
+            result["note_cooccur"] = {
+                "responses": self.total_responses,
+                "bundles": self.note_cooccur_bundles.to_dict(),
+                "marginals": self.note_cooccur_marginals.to_dict(),
+                "pairs": self.note_cooccur_pairs.to_dict(),
             }
             result["transition"] = {
                 "responses": self.total_responses,
