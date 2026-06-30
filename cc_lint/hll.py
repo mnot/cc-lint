@@ -66,6 +66,13 @@ def hll_estimate(registers: List[int]) -> int:
     alpha = 0.7213 / (1 + 1.079 / bucket_count)
     z_inverse = sum(2.0**-r for r in registers)
     estimate = alpha * (bucket_count**2) / z_inverse
+    # Small-range (linear-counting) correction only. We deliberately omit the
+    # classic large-range correction: the 32-bit zlib.crc32 hash (see hll_add)
+    # caps usable cardinality well below 2^32 anyway, where hash collisions
+    # bias the estimate low. cc-lint's largest count is the crawl-wide site
+    # total (tens of thousands), far under that ceiling, so neither matters
+    # here -- but any future per-(var, value) HLL set over a high-cardinality
+    # key would need a 64-bit hash and the large-range correction added back.
     if estimate <= 2.5 * bucket_count:
         zeroes = registers.count(0)
         if zeroes > 0:
