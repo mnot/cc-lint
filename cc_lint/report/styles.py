@@ -326,6 +326,9 @@ STYLE = """
     border-left: 1px solid var(--card-border);
   }
   .toc .toc-sub a { color: var(--muted); }
+  .toc .toc-link { margin: .35rem 0 .2rem; font-size: .9em; }
+  .toc .toc-link a { color: var(--muted); }
+  .toc .toc-link a:hover { color: var(--link); }
 
   @media (min-width: 96rem) {
     .toc {

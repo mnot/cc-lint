@@ -137,6 +137,9 @@ def _field_samples_details(samples: List[Dict[str, Any]]) -> str:
 
 # ---- navigation ------------------------------------------------------------
 
+# Mirrors the homepage URL in pyproject.toml [project.urls].
+PROJECT_URL = "https://github.com/mnot/cc-lint"
+
 _TOC_SECTION_RE = re.compile(r'<section id="([^"]+)"><h2>(.*?)</h2>', re.DOTALL)
 _TOC_CATEGORY_RE = re.compile(
     r'<section class="note-category" id="(cat-[^"]+)"><h3>(.*?)\s*<span', re.DOTALL
@@ -193,7 +196,10 @@ def build_toc(body_html: str) -> str:
     return (
         '<nav class="toc" aria-label="Contents">'
         "<details open><summary>On this page</summary>"
-        f'<ul>{"".join(items)}</ul></details></nav>'
+        f'<ul>{"".join(items)}</ul>'
+        f'<p class="toc-link"><em><a href="{PROJECT_URL}" target="_blank" '
+        'rel="noopener">cc-lint on GitHub</a></em></p>'
+        "</details></nav>"
     )
 
 
