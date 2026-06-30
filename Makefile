@@ -14,6 +14,7 @@ TEST_RUN_NAME = test-$(RUN_ID)
 .PHONY: help
 help:
 	@echo "Common targets:"
+	@echo "  make setup         Interactively create cc-lint.mk + mrjob configs"
 	@echo "  make venv          Create or update the local development environment"
 	@echo "  make test          Run fast unit tests"
 	@echo "  make tidy          Format Python code"
@@ -32,8 +33,30 @@ help:
 	@echo "  make clean         Remove local generated scratch artifacts and venv"
 	@echo ""
 	@echo "Configuration:"
-	@echo "  cp cc-lint.example.mk cc-lint.mk"
+	@echo "  make setup   (or by hand: cp cc-lint.example.mk cc-lint.mk)"
 	@echo "  make CONFIG=/path/to/config.mk show-config"
+
+# Generated, operator-specific config files (gitignored). `make setup` creates
+# them from the tracked *.example templates by substituting the bucket name.
+SETUP_FILES = cc-lint.mk mrjob.conf mrjob-test.conf
+
+.PHONY: setup
+setup:
+	@for f in $(SETUP_FILES); do \
+		if [ -e "$$f" ]; then \
+			echo "Refusing to overwrite existing $$f -- remove it first to regenerate."; \
+			exit 1; \
+		fi; \
+	done
+	@printf 'S3 bucket name (no s3:// prefix, e.g. my-cc-lint): '; \
+	read bucket; \
+	bucket=$$(printf '%s' "$$bucket" | sed -E 's#^s3://##; s#/+$$##'); \
+	if [ -z "$$bucket" ]; then echo "No bucket given; aborting."; exit 1; fi; \
+	sed "s/YOUR-BUCKET/$$bucket/g" cc-lint.example.mk      > cc-lint.mk; \
+	sed "s/YOUR-BUCKET/$$bucket/g" mrjob.conf.example      > mrjob.conf; \
+	sed "s/YOUR-BUCKET/$$bucket/g" mrjob-test.conf.example > mrjob-test.conf; \
+	echo "Wrote $(SETUP_FILES) for bucket '$$bucket'."; \
+	echo "Review them (esp. cc-lint.mk overrides), then: make show-config"
 
 .PHONY: show-config
 show-config:

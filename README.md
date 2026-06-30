@@ -60,28 +60,25 @@ cluster terminated in the EMR console after a run.
 1. Install and configure the AWS CLI (region `us-east-1` is closest
    to Common Crawl's S3 bucket).
 
-2. Copy the example config and fill in your bucket paths:
+2. Create your config files. `make setup` prompts for your S3 bucket
+   name and generates all three from the tracked `*.example` templates:
 
    ```bash
-   cp cc-lint.example.mk cc-lint.mk
-   # Edit cc-lint.mk: OUTPUT_DIR, PATHS_PREFIX, WHEEL_S3_PATH
+   make setup
    ```
 
-   Every Make target reads `cc-lint.defaults.mk` first, then your
-   `cc-lint.mk` overrides (or any `CONFIG=/path/to/another.mk`).
+   It writes `cc-lint.mk` (your `OUTPUT_DIR` / `PATHS_PREFIX` /
+   `WHEEL_S3_PATH`) plus `mrjob.conf` and `mrjob-test.conf` (the
+   `cloud_log_dir` where mrjob preserves EMR cluster logs, so
+   `make emr-timing EMR_LOG_CLUSTER_ID=j-...` has something to
+   download for postmortems). All three are gitignored, so your bucket
+   never lands in a commit. `make setup` refuses to overwrite an
+   existing file — delete it first to regenerate.
 
-   Copy the example mrjob configs and replace
-   `s3://YOUR-BUCKET/cc-lint/emr-logs/` (the `cloud_log_dir` value)
-   with a writable S3 path. mrjob writes the EMR cluster logs there
-   so `make emr-timing EMR_LOG_CLUSTER_ID=j-...` has something to
-   download for postmortems. The real configs are gitignored, like
-   `cc-lint.mk`, so your bucket never lands in a commit:
-
-   ```bash
-   cp mrjob.conf.example mrjob.conf
-   cp mrjob-test.conf.example mrjob-test.conf
-   # Edit both: cloud_log_dir
-   ```
+   To do it by hand instead, `cp` each `*.example` to its real name and
+   replace `YOUR-BUCKET`. Every Make target reads `cc-lint.defaults.mk`
+   first, then your `cc-lint.mk` overrides (or any
+   `CONFIG=/path/to/another.mk`).
 
 3. Build and upload the dependency wheel bundle. The bootstrap
    installs packages from `/tmp/wheels` on each EMR node with
