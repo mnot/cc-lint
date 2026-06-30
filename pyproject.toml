@@ -6,7 +6,7 @@ authors = [
 ]
 description = "Lint CSS and HTML for Common Crawl"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {file = "LICENSE.md"}
 classifiers = [
     "Operating System :: OS Independent",

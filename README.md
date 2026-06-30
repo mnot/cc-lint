@@ -13,7 +13,7 @@ aggregation differ.
 
 ## Local setup
 
-Requires Python 3.9+.
+Requires Python 3.10+.
 
 ```bash
 make venv         # create .venv and install runtime + dev dependencies
