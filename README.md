@@ -1,45 +1,39 @@
 # Common Crawl Response Linter
 
 Run [httplint](https://github.com/mnot/httplint) against the
-[Common Crawl](https://commoncrawl.org/) WAT archives and collect
+[Common Crawl](https://commoncrawl.org/) WAT archives and report aggregate
 statistics on the HTTP-level issues found in real-world responses.
 
-The tool runs locally for development against a handful of WARC files,
-and on Amazon EMR for full-crawl analyses. Both paths share the same
-linting and reporting code; only the input distribution and result
-aggregation differ.
+There are two ways to run it, sharing the same linting and reporting code
+— only the input distribution and result aggregation differ:
+
+- **Local** — lint a handful of WAT files fetched over HTTP. No AWS
+  required; good for spot checks and development. Start here.
+- **Amazon EMR** — distribute an entire Common Crawl release across a
+  transient EMR cluster for a full-crawl analysis (~123M responses).
+  Needs an AWS account and costs money per run.
+
+Contributor setup (tests, typecheck, lint) lives in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
-## Local setup
+## Local run
 
-Requires Python 3.10+.
-
-```bash
-make venv         # create .venv and install runtime + dev dependencies
-make test         # run unit tests
-make typecheck    # mypy
-make lint         # pylint + validate-pyproject
-```
-
-`make venv` installs the `cc-lint[dev]` extras, which pulls in the
-optional `[emr]` group (`mrjob`, `tqdm`) needed to drive EMR jobs.
-
-### Local lint run
-
-The `cc-lint` CLI fetches one or more WAT files over HTTP from
-`data.commoncrawl.org`, runs httplint over their response metadata,
-and renders an HTML + Markdown report:
+Lint a few WAT files with no AWS setup. Requires Python 3.10+; the
+virtualenv is created automatically on first run.
 
 ```bash
-# Put a few WARC paths in paths.txt, one per line:
+# One or more WAT paths, one per line:
 echo crawl-data/CC-MAIN-2024-18/segments/.../warc/CC-MAIN-...warc.gz > paths.txt
 
-make report.html  # lints and writes report.html plus report.md
+make report.html   # fetches the WATs, lints, writes report.html + report.md
 ```
 
-The Make target wraps `cc-lint lint`; see `cc-lint lint --help` for the
-full option set.
+`make report.html` wraps the `cc-lint lint` CLI: it fetches each WAT over
+HTTP from `data.commoncrawl.org`, runs httplint over the response
+metadata, and renders the report. See `cc-lint lint --help` for the full
+option set.
 
 ---
 

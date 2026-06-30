@@ -94,7 +94,7 @@ paths.txt:
 LOCAL_IPASN_ARG = $(if $(wildcard $(IPASN_CACHE)),--ipasn-path $(IPASN_CACHE),)
 
 .PHONY: report.html
-report.html: paths.txt
+report.html: venv paths.txt
 	PYTHONPATH=$(VENV) $(VENV)/cc-lint lint --limit 100 --cache-dir $(CACHE_DIR) --paths-file paths.txt --top-sites $(LOCAL_TOP_N) $(LOCAL_IPASN_ARG) --output $@
 
 .PHONY: test
