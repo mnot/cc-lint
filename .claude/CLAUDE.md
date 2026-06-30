@@ -175,38 +175,14 @@ when changing the committed EMR knobs (instance fleet, jobconf); the real
 
 ## Where things live
 
+The `cc_lint/` package map is in [CONTRIBUTING.md](../CONTRIBUTING.md) —
+don't duplicate it here. Root build/config files not covered there:
+
 ```
-cc_lint/
-  emr/
-    job.py             # mrjob entrypoint; mapper/reducer; merge_* functions
-    warc_worker.py     # fork-isolated per-WAT child
-    split_paths.py     # chunk warc.paths into N mapper inputs
-    finalize.py        # merge reducer parts → HTML + Markdown
-    timing.py          # parse preserved EMR syslogs for stage timings
-  stats.py             # StatsCollector; VARS_TO_TRACK; get_note_value
-  histograms.py        # bucket scales for numeric note vars
-  hll.py               # HyperLogLog
-  cooccur.py           # security-header co-occurrence + generic block machinery (#6)
-  cooccur_alphabet.toml # configurable co-occurrence header alphabet (#6/#28)
-  note_cooccur.py      # note/finding co-occurrence: severity gate + lineage exclusion (#7)
-  transition.py        # legacy/modern dual-emit pairs (transition tax, #11)
-  top_sites.py         # Tranco filter + site normalisation
-  fingerprint.py       # infra layer matching + name-based vendor lookup (#4/#12)
-  redact.py            # sensitive-value scrubbing for captured samples (#28)
-  header_categories.py # standard/deprecated/proprietary byte buckets (#10)
-  header_census.py     # report-time non-standard header census (#12)
-  header_families.toml # semantic-family + well-known table for the census (#12)
-  report/
-    sections.py        # HTML sections
-    markdown.py        # Markdown
-    severity.py        # Note-class introspection (severity/category/summary)
-    render.py          # Top-level orchestration
-    styles.py          # CSS
-tests/                 # 78 tests, including merge / report / HLL regression
-Makefile               # All run targets; see `make help`
-mrjob.conf.example     # Prod EMR config template (30 c5.xlarge cores)
-mrjob-test.conf.example# Test EMR config template (5–15 c5.xlarge cores)
-mrjob.conf             # Local copy of the above (gitignored; real bucket)
-cc-lint.defaults.mk    # TOP_N, MAP_TASKS, REDUCES, etc.
-cc-lint.mk             # Per-operator overrides (bucket names, etc.; gitignored)
+Makefile                # All run targets; see `make help`
+mrjob.conf.example      # Prod EMR config template (30 c5.xlarge cores)
+mrjob-test.conf.example # Test EMR config template (5–15 c5.xlarge cores)
+mrjob.conf              # Local copy of the above (gitignored; real bucket)
+cc-lint.defaults.mk     # TOP_N, MAP_TASKS, REDUCES, etc.
+cc-lint.mk              # Per-operator overrides (bucket names; gitignored)
 ```
