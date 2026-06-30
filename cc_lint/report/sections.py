@@ -27,6 +27,7 @@ from cc_lint.cooccur import (
 )
 from cc_lint.fingerprint import UNMATCHED
 from cc_lint.header_categories import categorize_header_bytes
+from cc_lint.header_census import Census, Cluster, HeaderEntry
 from cc_lint.histograms import (
     BYTE_BUCKET_ORDER,
     LIFETIME_BUCKET_ORDER,
@@ -1191,27 +1192,119 @@ def render_asn_section(
     )
 
 
-def render_unprocessed_section(
-    unprocessed_counts: Dict[str, int], truncated: bool
+def _census_members_html(members: List[HeaderEntry]) -> str:
+    return ", ".join(f"<code>{html.escape(member.name)}</code>" for member in members)
+
+
+def _census_cluster_rows(clusters: List[Cluster], total_bytes: int) -> str:
+    rows: List[str] = []
+    for cluster in clusters:
+        pct = (cluster.byte_count / total_bytes * 100) if total_bytes else 0
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(cluster.label)}</td>"
+            f"<td>{_format_count(cluster.distinct)}</td>"
+            f"<td>{_format_count(cluster.count)}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f'<td class="muted">{_census_members_html(cluster.members)}</td>'
+            "</tr>"
+        )
+    return "".join(rows)
+
+
+def _census_axis_table(
+    heading: str, blurb: str, clusters: List[Cluster], total_bytes: int
 ) -> str:
-    if not unprocessed_counts:
+    if not clusters:
         return ""
-    top = sorted(unprocessed_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
-    rows = "".join(
-        f"<tr><td>{html.escape(name)}</td><td>{_format_count(count)}</td></tr>"
-        for name, count in top
-    )
     return (
-        '<section id="unprocessed">'
-        "<h2>Top Unsupported Headers</h2>"
-        '<p class="muted">Header names httplint did not recognise, ranked by occurrence.</p>'
-        f"{TRUNCATED_NOTE if truncated else ''}"
+        f"<h3>{heading}</h3>"
+        f'<p class="muted">{blurb}</p>'
         '<table class="data-table">'
-        "<thead><tr><th>Header</th><th>Count</th></tr></thead>"
-        f"<tbody>{rows}</tbody>"
-        "</table>"
-        "</section>"
+        "<thead><tr><th>Cluster</th><th>Distinct headers</th>"
+        "<th>Responses</th><th>% of non-standard bytes</th>"
+        "<th>Example members</th></tr></thead>"
+        f"<tbody>{_census_cluster_rows(clusters, total_bytes)}</tbody></table>"
     )
+
+
+def render_census_section(census: Census) -> str:
+    """Render the non-standard header census (issue #12)."""
+    if not census.has_data:
+        return ""
+    wk_pct = (
+        census.well_known_names / census.distinct_names * 100
+        if census.distinct_names
+        else 0
+    )
+    parts = [
+        '<section id="header-census">',
+        "<h2>Non-Standard Header Census</h2>",
+        '<p class="muted">Proprietary response headers &mdash; names httplint '
+        "has no parser for and that are not deprecated, the same "
+        "registered/non-standard boundary the Vary and byte-economics "
+        "sections use. This is where the vendor-owned <code>x-</code> "
+        "namespace lives and where de-facto conventions are born. Only header "
+        "<em>names</em> are counted &mdash; values are never retained, since "
+        "many carry opaque request-ids or tokens. Crawler-injected "
+        "<code>x-crawler-*</code> headers are excluded. Counts are responses "
+        "carrying the header (a header is counted once per response).</p>",
+        f"{TRUNCATED_NOTE if census.truncated else ''}"
+        '<p class="muted">Cluster totals are head-only lower bounds: they are '
+        "derived from the shuffle-retained head of the header distribution, so "
+        "the long tail of rare proprietary names is already discarded before "
+        "this clustering runs.</p>",
+        f"<p><strong>{_format_count(census.distinct_names)}</strong> distinct "
+        "non-standard header names in the retained head, across "
+        f"<strong>{_format_count(census.total_count)}</strong> response-header "
+        f"appearances ({_format_byte_size(census.total_bytes)}). "
+        f"<strong>{_format_count(census.well_known_names)}</strong> "
+        f"({wk_pct:.0f}%) are well-known-but-unregistered de-facto headers "
+        "(<code>x-forwarded-*</code>, <code>x-request-id</code>, &hellip;); the "
+        f"other <strong>{_format_count(census.novel_names)}</strong> are the "
+        "novel tail.</p>",
+        _census_axis_table(
+            "By inferred vendor",
+            "Attribution is by header <em>name</em> (the same fingerprint "
+            "signal table the infrastructure section uses, so the two agree on "
+            "vendor identity); a name in no vendor namespace is "
+            "<em>Unattributed</em>. This view tells the incentives story.",
+            census.by_vendor,
+            census.total_bytes,
+        ),
+        _census_axis_table(
+            "By semantic family",
+            "What the header is for, from a data-driven name-pattern table.",
+            census.by_family,
+            census.total_bytes,
+        ),
+        _census_axis_table(
+            "By prefix",
+            "Auto-derived from the name, so a brand-new vendor namespace "
+            "forms its own cluster the moment it appears.",
+            census.by_prefix,
+            census.total_bytes,
+        ),
+    ]
+
+    top_rows = "".join(
+        "<tr>"
+        f"<td><code>{html.escape(entry.name)}</code></td>"
+        f"<td>{html.escape(entry.vendor) if entry.vendor else '&mdash;'}</td>"
+        f"<td>{_format_count(entry.count)}</td>"
+        f"<td>{'de-facto' if entry.well_known else 'novel'}</td>"
+        "</tr>"
+        for entry in census.top_headers
+    )
+    parts.append(
+        "<h3>Top non-standard headers</h3>"
+        '<table class="data-table">'
+        "<thead><tr><th>Header</th><th>Inferred vendor</th>"
+        "<th>Responses</th><th>Class</th></tr></thead>"
+        f"<tbody>{top_rows}</tbody></table>"
+    )
+    parts.append("</section>")
+    return "".join(parts)
 
 
 # ---- Vary composition ------------------------------------------------------

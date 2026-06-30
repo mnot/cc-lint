@@ -10,6 +10,7 @@ import os
 from typing import Any, Dict, Optional
 
 from cc_lint.fingerprint import default_fingerprinter
+from cc_lint.header_census import build_census
 from cc_lint.hll import hll_estimate
 from cc_lint.report.markdown import render_markdown
 from cc_lint.report.sections import (
@@ -17,6 +18,7 @@ from cc_lint.report.sections import (
     render_asn_section,
     render_cache_control_section,
     render_category_overview,
+    render_census_section,
     render_cooccur_section,
     render_csp_section,
     render_field_counts_section,
@@ -28,7 +30,6 @@ from cc_lint.report.sections import (
     render_notes_section,
     render_run_context,
     render_transition_section,
-    render_unprocessed_section,
     render_value_histograms_section,
     render_vary_section,
 )
@@ -51,7 +52,11 @@ def _build_html(data: Dict[str, Any]) -> str:
     total_responses = int(data.get("total_responses", 0))
     notes = data.get("notes") or {}
     field_counts: Dict[str, int] = data.get("field_counts", {}) or {}
-    unprocessed_counts: Dict[str, int] = data.get("unprocessed_counts", {}) or {}
+    census = build_census(
+        data.get("unprocessed_counts") or {},
+        data.get("field_bytes") or {},
+        bool(data.get("truncated_unprocessed_counts")),
+    )
 
     total_notes = count_total_notes(notes)
     seen_note_ids = set(notes.keys())
@@ -134,9 +139,7 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_cache_control_section(cache_control),
         render_cooccur_section(cooccur, layer_roles),
         render_transition_section(transition),
-        render_unprocessed_section(
-            unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
-        ),
+        render_census_section(census),
         render_missing_section(reachable_unseen, request_only, body_only),
     ]
 

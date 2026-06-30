@@ -1,0 +1,117 @@
+# Semantic-family classification for the non-standard header census (#12).
+#
+# The census clusters proprietary (IANA-unregistered) response header names
+# three ways: by inferred vendor (reusing fingerprints.toml), by literal
+# prefix (auto-derived from the name), and by *semantic family* -- what the
+# header is for. This table drives the semantic-family axis.
+#
+# Matching is purely lexical and name-only (the census never sees values): a
+# header belongs to a family if its lowercased name equals or starts with one
+# of the family's `prefixes`. Families are tried in file order and the first
+# match wins, so order more-specific families before broader ones. A name
+# matching no family lands in the implicit "other" bucket.
+#
+# `[well_known]` tags de-facto-standard-but-unregistered names (x-forwarded-*,
+# x-request-id, ...) so the census can separate the well-trodden tail from the
+# genuinely novel one -- the novel tail is where emerging conventions appear.
+#
+# This is best-effort and meant to be tuned from real data, exactly like
+# fingerprints.toml. Most security headers (x-frame-options,
+# x-content-type-options, x-xss-protection) are *registered* and so never
+# reach the census; the security family here only catches the proprietary
+# stragglers.
+
+[[family]]
+id = "routing"
+label = "Routing / forwarding"
+prefixes = [
+  "x-forwarded-",
+  "x-real-ip",
+  "x-backend",
+  "x-served-by",
+  "x-origin-",
+  "x-host",
+  "x-lb-",
+  "x-pop",
+  "x-edge-",
+  "x-proxy-",
+  "x-upstream",
+]
+
+[[family]]
+id = "caching"
+label = "Caching"
+prefixes = [
+  "x-cache",
+  "cache-",
+  "x-varnish",
+  "x-vercel-cache",
+  "x-nextjs-cache",
+  "x-drupal-cache",
+  "x-litespeed-cache",
+  "x-fastcgi-cache",
+  "x-proxy-cache",
+  "x-cacheable",
+  "x-hits",
+  "surrogate-",
+  "cf-cache-status",
+]
+
+[[family]]
+id = "observability"
+label = "Observability / tracing"
+prefixes = [
+  "x-trace",
+  "x-amzn-trace",
+  "traceparent",
+  "tracestate",
+  "x-cloud-trace",
+  "x-request-id",
+  "x-amzn-requestid",
+  "x-correlation",
+  "x-b3-",
+  "x-datadog",
+  "x-newrelic",
+  "x-runtime",
+  "x-response-time",
+  "x-timer",
+  "x-render-",
+  "x-rblx-",
+]
+
+[[family]]
+id = "security"
+label = "Security"
+prefixes = [
+  "x-permitted-cross-domain",
+  "x-download-options",
+  "x-webkit-csp",
+  "x-content-security-policy",
+  "x-xss",
+  "x-frame",
+  "x-aspnet",
+]
+
+[well_known]
+# IANA-unregistered but broadly deployed; not "novel".
+prefixes = [
+  "x-forwarded-",
+  "x-frame-options",
+  "x-content-type-options",
+  "x-xss-protection",
+  "x-permitted-cross-domain",
+  "x-dns-prefetch-control",
+  "x-aspnet",
+  "x-pingback",
+]
+names = [
+  "x-request-id",
+  "x-correlation-id",
+  "x-real-ip",
+  "x-ua-compatible",
+  "x-powered-by",
+  "x-download-options",
+  "x-runtime",
+  "x-response-time",
+  "p3p",
+]

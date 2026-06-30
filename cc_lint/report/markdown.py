@@ -29,6 +29,7 @@ from cc_lint.cooccur import (
 )
 from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
 from cc_lint.header_categories import categorize_header_bytes
+from cc_lint.header_census import Census, Cluster, build_census
 from cc_lint.histograms import (
     BYTE_BUCKET_ORDER,
     LIFETIME_BUCKET_ORDER,
@@ -1339,20 +1340,103 @@ def _render_transition_section(transition: Dict[str, Any]) -> List[str]:
     return lines
 
 
-def _render_unprocessed(
-    unprocessed_counts: Dict[str, int], truncated: bool
+def _census_members_md(cluster: Cluster) -> str:
+    return ", ".join(f"`{_md_escape_pipe(m.name)}`" for m in cluster.members)
+
+
+def _census_axis_md(
+    heading: str, blurb: str, clusters: List[Cluster], total_bytes: int
 ) -> List[str]:
-    if not unprocessed_counts:
+    if not clusters:
         return []
-    lines = ["## Top Unsupported Headers", ""]
-    if truncated:
+    lines = [f"### {heading}", "", blurb, ""]
+    lines.append("| Cluster | Distinct | Responses | % bytes | Example members |")
+    lines.append("| --- | --: | --: | --: | --- |")
+    for cluster in clusters:
+        pct = (cluster.byte_count / total_bytes * 100) if total_bytes else 0
+        lines.append(
+            f"| {_md_escape_pipe(cluster.label)} | {_fmt_count(cluster.distinct)} "
+            f"| {_fmt_count(cluster.count)} | {pct:.1f}% "
+            f"| {_census_members_md(cluster)} |"
+        )
+    lines.append("")
+    return lines
+
+
+def _render_census(census: Census) -> List[str]:
+    if not census.has_data:
+        return []
+    wk_pct = (
+        census.well_known_names / census.distinct_names * 100
+        if census.distinct_names
+        else 0
+    )
+    lines = ["## Non-Standard Header Census", ""]
+    lines.append(
+        "Proprietary response headers — names httplint has no parser for and "
+        "that are not deprecated (the same registered/non-standard boundary "
+        "the Vary and byte-economics sections use). Only header *names* are "
+        "counted; values are never retained. `x-crawler-*` headers excluded. "
+        "Counts are responses carrying the header (counted once per response)."
+    )
+    lines.append("")
+    if census.truncated:
         lines.append("_Long tail elided during shuffle; head only._")
         lines.append("")
-    lines.append("| Header | Count |")
-    lines.append("| --- | --- |")
-    top = sorted(unprocessed_counts.items(), key=lambda kv: kv[1], reverse=True)[:50]
-    for name, count in top:
-        lines.append(f"| {_md_escape_pipe(name)} | {_fmt_count(count)} |")
+    lines.append(
+        "Cluster totals are head-only lower bounds — derived from the "
+        "shuffle-retained head, so the long tail of rare proprietary names is "
+        "already discarded before clustering."
+    )
+    lines.append("")
+    lines.append(
+        f"**{_fmt_count(census.distinct_names)}** distinct non-standard header "
+        f"names in the retained head, across **{_fmt_count(census.total_count)}** "
+        f"response-header appearances ({_fmt_byte_size_md(census.total_bytes)}). "
+        f"**{_fmt_count(census.well_known_names)}** ({wk_pct:.0f}%) are "
+        "well-known-but-unregistered de-facto headers (`x-forwarded-*`, "
+        f"`x-request-id`, …); the other **{_fmt_count(census.novel_names)}** "
+        "are the novel tail."
+    )
+    lines.append("")
+    lines.extend(
+        _census_axis_md(
+            "By inferred vendor",
+            "Attribution is by header *name* (the same fingerprint signal "
+            "table the infrastructure section uses); a name in no vendor "
+            "namespace is _Unattributed_. This view tells the incentives story.",
+            census.by_vendor,
+            census.total_bytes,
+        )
+    )
+    lines.extend(
+        _census_axis_md(
+            "By semantic family",
+            "What the header is for, from a data-driven name-pattern table.",
+            census.by_family,
+            census.total_bytes,
+        )
+    )
+    lines.extend(
+        _census_axis_md(
+            "By prefix",
+            "Auto-derived from the name, so a brand-new vendor namespace forms "
+            "its own cluster the moment it appears.",
+            census.by_prefix,
+            census.total_bytes,
+        )
+    )
+    lines.append("### Top non-standard headers")
+    lines.append("")
+    lines.append("| Header | Inferred vendor | Responses | Class |")
+    lines.append("| --- | --- | --: | --- |")
+    for entry in census.top_headers:
+        vendor = entry.vendor or "—"
+        klass = "de-facto" if entry.well_known else "novel"
+        lines.append(
+            f"| `{_md_escape_pipe(entry.name)}` | {_md_escape_pipe(vendor)} "
+            f"| {_fmt_count(entry.count)} | {klass} |"
+        )
     lines.append("")
     return lines
 
@@ -1399,7 +1483,11 @@ def render_markdown(data: Dict[str, Any]) -> str:
     total_responses = int(data.get("total_responses", 0))
     notes = data.get("notes") or {}
     field_counts: Dict[str, int] = data.get("field_counts") or {}
-    unprocessed_counts: Dict[str, int] = data.get("unprocessed_counts") or {}
+    census = build_census(
+        data.get("unprocessed_counts") or {},
+        data.get("field_bytes") or {},
+        bool(data.get("truncated_unprocessed_counts")),
+    )
     severity_counts = data.get("severity_counts") or {}
     total_notes = _count_total_notes(notes)
     seen_note_ids = set(notes.keys())
@@ -1469,10 +1557,6 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(_render_cache_control_section(data.get("cache_control") or {}))
     lines.extend(_render_cooccur_section(data.get("cooccur") or {}))
     lines.extend(_render_transition_section(data.get("transition") or {}))
-    lines.extend(
-        _render_unprocessed(
-            unprocessed_counts, bool(data.get("truncated_unprocessed_counts"))
-        )
-    )
+    lines.extend(_render_census(census))
     lines.extend(_render_unseen(reachable_unseen, request_only, body_only))
     return "\n".join(lines).rstrip() + "\n"

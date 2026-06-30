@@ -116,6 +116,19 @@ fetch to break burst clustering across 1600 simultaneous mappers.
 - Notes sort by severity desc, then per-note site HLL estimate desc, then
   occurrence count desc. Adding a noisy single-site note shouldn't drown out
   a broadly-fired one.
+- The non-standard header census (`cc_lint/header_census.py`, #12) is a
+  *report-time* derivation — no mapper or shuffle change. It clusters the
+  proprietary header names from the merged `unprocessed_counts` head (the
+  dedicated non-standard top-K, deeper-tailed than `field_counts`) by inferred
+  vendor (name-based, via `Fingerprinter.vendor_for_name` reusing the #4
+  signal table + its new `name_prefixes`), by semantic family
+  (`header_families.toml`), and by auto-derived literal prefix. Byte share
+  comes from the #10 `field_bytes` dict. Cluster totals are head-only lower
+  bounds; accurate per-cluster totals would need the cluster key computed at
+  map time (a deliberate future enhancement). `build_census` is called once in
+  each renderer and its output is deterministically ordered + lowercased so a
+  future longitudinal "what's new this crawl" diff (the part-b of #12 that is
+  gated on multi-crawl runs) is a set-difference, not a reformat.
 
 ## httplint pin
 
@@ -171,6 +184,10 @@ cc_lint/
   hll.py               # HyperLogLog
   transition.py        # legacy/modern dual-emit pairs (transition tax, #11)
   top_sites.py         # Tranco filter + site normalisation
+  fingerprint.py       # infra layer matching + name-based vendor lookup (#4/#12)
+  header_categories.py # standard/deprecated/proprietary byte buckets (#10)
+  header_census.py     # report-time non-standard header census (#12)
+  header_families.toml # semantic-family + well-known table for the census (#12)
   report/
     sections.py        # HTML sections
     markdown.py        # Markdown

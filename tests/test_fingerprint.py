@@ -106,3 +106,49 @@ def test_duplicate_ids_raise(tmp_path: Path) -> None:
 def test_public_type() -> None:
     # The public type is importable for annotations elsewhere.
     assert isinstance(load_fingerprinter(), Fingerprinter)
+
+
+def test_vendor_for_name_exact_and_prefix() -> None:
+    fp = load_fingerprinter()
+    # Exact presence-signal header name.
+    assert fp.vendor_for_name("cf-ray") == "cloudflare"
+    # name_prefixes attribution for an arbitrary header in the namespace.
+    assert fp.vendor_for_name("cf-some-new-header") == "cloudflare"
+    assert fp.vendor_for_name("x-vercel-analytics") == "vercel"
+    assert fp.vendor_for_name("x-envoy-decorator-operation") == "envoy"
+    # x-amz-cf-* is CloudFront; bare x-amz-* (general AWS) stays unattributed.
+    assert fp.vendor_for_name("x-amz-cf-pop") == "cloudfront"
+    assert fp.vendor_for_name("x-amz-request-id") is None
+    # A genuinely novel header maps to no vendor.
+    assert fp.vendor_for_name("x-acme-widget") is None
+
+
+def test_name_prefixes_do_not_fingerprint_responses() -> None:
+    # name_prefixes are census-only; a header that merely *starts with* a
+    # vendor prefix but isn't a real signal must not match() that layer.
+    fp = load_fingerprinter()
+    assert fp.match(_headers(cf_brand_new="1")) == set()
+
+
+def test_name_prefixes_parsed(tmp_path: Path) -> None:
+    table = tmp_path / "fp.toml"
+    table.write_text("""
+[[layer]]
+id = "demo"
+role = "cdn"
+name_prefixes = ["x-demo-"]
+signals = [ { header = "x-demo-id" } ]
+""")
+    fp = load_fingerprinter(str(table))
+    assert fp.vendor_for_name("x-demo-id") == "demo"
+    assert fp.vendor_for_name("x-demo-anything") == "demo"
+
+
+def test_bad_name_prefixes_raise(tmp_path: Path) -> None:
+    table = tmp_path / "bad.toml"
+    table.write_text(
+        '[[layer]]\nid="a"\nrole="cdn"\n'
+        'name_prefixes = [1]\nsignals=[{header="x"}]\n'
+    )
+    with pytest.raises(ValueError, match="name_prefixes"):
+        load_fingerprinter(str(table))
