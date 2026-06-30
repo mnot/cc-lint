@@ -70,11 +70,18 @@ cluster terminated in the EMR console after a run.
    Every Make target reads `cc-lint.defaults.mk` first, then your
    `cc-lint.mk` overrides (or any `CONFIG=/path/to/another.mk`).
 
-   Edit `mrjob.conf` and `mrjob-test.conf` to replace
+   Copy the example mrjob configs and replace
    `s3://YOUR-BUCKET/cc-lint/emr-logs/` (the `cloud_log_dir` value)
    with a writable S3 path. mrjob writes the EMR cluster logs there
    so `make emr-timing EMR_LOG_CLUSTER_ID=j-...` has something to
-   download for postmortems.
+   download for postmortems. The real configs are gitignored, like
+   `cc-lint.mk`, so your bucket never lands in a commit:
+
+   ```bash
+   cp mrjob.conf.example mrjob.conf
+   cp mrjob-test.conf.example mrjob-test.conf
+   # Edit both: cloud_log_dir
+   ```
 
 3. Build and upload the dependency wheel bundle. The bootstrap
    installs packages from `/tmp/wheels` on each EMR node with

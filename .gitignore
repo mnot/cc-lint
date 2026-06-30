@@ -19,6 +19,8 @@ __pycache__
 /report.md
 /stats.json
 /cc-lint.mk
+/mrjob.conf
+/mrjob-test.conf
 /results
 /wheels
 # === pyproject-tmpl: end "extras" ===

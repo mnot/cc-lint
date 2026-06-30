@@ -147,10 +147,12 @@ in the currently-installed wheel.
 
 ## Local-only config in `mrjob.conf` / `mrjob-test.conf`
 
-Both files have a `cloud_log_dir: s3://YOUR-BUCKET/cc-lint/emr-logs/`
-placeholder. The committed repo keeps the placeholder; the working copy has
-a real bucket. **Don't commit the local edit** — stage hunks individually
-when those files are dirty.
+These are gitignored, like `cc-lint.mk`. The repo tracks
+`mrjob.conf.example` / `mrjob-test.conf.example` with a
+`cloud_log_dir: s3://YOUR-BUCKET/cc-lint/emr-logs/` placeholder; an operator
+`cp`s each to the real filename and fills in their bucket. Edit the example
+when changing the committed EMR knobs (instance fleet, jobconf); the real
+`mrjob.conf` is a local copy and never committed.
 
 ## Conventions
 
@@ -202,8 +204,9 @@ cc_lint/
     styles.py          # CSS
 tests/                 # 78 tests, including merge / report / HLL regression
 Makefile               # All run targets; see `make help`
-mrjob.conf             # Prod EMR config (30 c5.xlarge cores)
-mrjob-test.conf        # Test EMR config (5–15 c5.xlarge cores)
+mrjob.conf.example     # Prod EMR config template (30 c5.xlarge cores)
+mrjob-test.conf.example# Test EMR config template (5–15 c5.xlarge cores)
+mrjob.conf             # Local copy of the above (gitignored; real bucket)
 cc-lint.defaults.mk    # TOP_N, MAP_TASKS, REDUCES, etc.
-cc-lint.mk             # Per-operator overrides (bucket names, etc.)
+cc-lint.mk             # Per-operator overrides (bucket names, etc.; gitignored)
 ```
