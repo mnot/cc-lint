@@ -97,11 +97,17 @@ def _build_html(data: Dict[str, Any]) -> str:
         layer_roles = {}
         asn_to_layer = {}
 
+    # Sections are grouped so related findings sit together and the report
+    # reads as a narrative: the lint findings first (overview -> detail ->
+    # how they clump -> what never fired), then the header landscape, then
+    # infrastructure provenance, then caching behaviour, then security/policy
+    # posture. The table of contents is derived from this order.
     body_parts = [
         render_header_stats(
             total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
         ),
         render_run_context(run_context, finalized_at),
+        # --- Findings ---
         render_health_summary(severity_counts),
         render_category_overview(notes, category_index, category_order),
         render_notes_section(
@@ -114,6 +120,11 @@ def _build_html(data: Dict[str, Any]) -> str:
             distinct_sites_estimate,
             layer_counts,
         ),
+        render_note_cooccur_section(note_cooccur, seen_note_ids),
+        render_missing_section(
+            reachable_unseen, request_only, body_only, total_responses
+        ),
+        # --- Header landscape ---
         render_field_counts_section(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
         ),
@@ -124,6 +135,8 @@ def _build_html(data: Dict[str, Any]) -> str:
             total_responses,
             bool(data.get("truncated_field_bytes")),
         ),
+        render_census_section(census),
+        # --- Infrastructure ---
         render_infrastructure_section(
             layer_counts,
             field_counts_by_layer,
@@ -138,17 +151,14 @@ def _build_html(data: Dict[str, Any]) -> str:
             asn_to_layer,
             bool(data.get("truncated_asn_counts")),
         ),
-        render_csp_section(csp_sizes),
-        render_value_histograms_section(data.get("value_histograms") or {}),
+        # --- Caching ---
         render_vary_section(vary),
         render_cache_control_section(cache_control),
+        render_value_histograms_section(data.get("value_histograms") or {}),
+        # --- Security / policy posture ---
         render_cooccur_section(cooccur, layer_roles),
-        render_note_cooccur_section(note_cooccur, seen_note_ids),
+        render_csp_section(csp_sizes),
         render_transition_section(transition),
-        render_census_section(census),
-        render_missing_section(
-            reachable_unseen, request_only, body_only, total_responses
-        ),
     ]
 
     # Hero + run-context lead; the table of contents sits between them and the

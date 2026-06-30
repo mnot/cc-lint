@@ -1641,6 +1641,9 @@ def render_markdown(data: Dict[str, Any]) -> str:
             total_responses, total_notes, len(seen_note_ids), distinct_sites_estimate
         )
     )
+    # Section order mirrors the HTML report (see cc_lint/report/render.py):
+    # findings, header landscape, infrastructure, caching, security/policy.
+    # --- Findings ---
     lines.extend(_render_health_section(severity_counts))
     lines.extend(_render_category_overview(notes, category_index, category_order))
     lines.extend(
@@ -1655,6 +1658,11 @@ def render_markdown(data: Dict[str, Any]) -> str:
             data.get("layer_counts") or {},
         )
     )
+    lines.extend(_render_note_cooccur_section(data.get("note_cooccur") or {}))
+    lines.extend(
+        _render_unseen(reachable_unseen, request_only, body_only, total_responses)
+    )
+    # --- Header landscape ---
     lines.extend(
         _render_field_counts(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))
@@ -1669,6 +1677,8 @@ def render_markdown(data: Dict[str, Any]) -> str:
             bool(data.get("truncated_field_bytes")),
         )
     )
+    lines.extend(_render_census(census))
+    # --- Infrastructure ---
     lines.extend(
         _render_infrastructure(
             data.get("layer_counts") or {},
@@ -1685,15 +1695,12 @@ def render_markdown(data: Dict[str, Any]) -> str:
             bool(data.get("truncated_asn_counts")),
         )
     )
-    lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
-    lines.extend(_render_value_histograms(data.get("value_histograms") or {}))
+    # --- Caching ---
     lines.extend(_render_vary_section(data.get("vary") or {}))
     lines.extend(_render_cache_control_section(data.get("cache_control") or {}))
+    lines.extend(_render_value_histograms(data.get("value_histograms") or {}))
+    # --- Security / policy posture ---
     lines.extend(_render_cooccur_section(data.get("cooccur") or {}))
-    lines.extend(_render_note_cooccur_section(data.get("note_cooccur") or {}))
+    lines.extend(_render_csp_section(data.get("csp_max_by_site") or {}))
     lines.extend(_render_transition_section(data.get("transition") or {}))
-    lines.extend(_render_census(census))
-    lines.extend(
-        _render_unseen(reachable_unseen, request_only, body_only, total_responses)
-    )
     return "\n".join(lines).rstrip() + "\n"
