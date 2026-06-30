@@ -69,7 +69,12 @@ where = ["."]
 include-package-data = true
 
 [tool.setuptools.package-data]
-cc_lint = ["py.typed", "fingerprints.toml", "header_families.toml"]
+cc_lint = [
+    "py.typed",
+    "fingerprints.toml",
+    "header_families.toml",
+    "cooccur_alphabet.toml",
+]
 
 [[tool.mypy.overrides]]
 module = [

@@ -1,0 +1,36 @@
+# Header alphabet for the co-occurrence report (#6, made configurable in #28).
+#
+# Co-occurrence ("which headers travel together") is computed over a fixed,
+# curated alphabet rather than every header seen, because the bundle space is
+# the power set of the alphabet: at most 2**len(headers) bundle keys and
+# C(len(headers), 2) pair keys cross the mapper -> reducer shuffle. A small,
+# deliberate alphabet keeps that bounded (a few hundred bundles in practice).
+#
+# The default is the security / policy posture set: each name is a header
+# whose presence is a deliberate security or availability choice and a
+# candidate for CDN / framework defaulting. Swap this list to study a
+# different family -- caching, CORS, cookies -- without code changes; just
+# keep it short (every added name doubles the worst-case bundle space) and
+# lowercased (matched against cc-lint's normalised header names).
+#
+# This table ships to EMR mappers via --files (see the Makefile) and is read
+# at map time, so an edit changes what the next run shuffles.
+
+headers = [
+  "strict-transport-security",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "x-frame-options",
+  "x-content-type-options",
+  "referrer-policy",
+  "permissions-policy",
+  "cross-origin-opener-policy",
+  "cross-origin-embedder-policy",
+  "cross-origin-resource-policy",
+  "x-xss-protection",
+  "x-permitted-cross-domain-policies",
+  "origin-agent-cluster",
+  "report-to",
+  "reporting-endpoints",
+  "nel",
+]

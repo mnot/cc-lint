@@ -143,7 +143,9 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_note_cooccur_section(note_cooccur),
         render_transition_section(transition),
         render_census_section(census),
-        render_missing_section(reachable_unseen, request_only, body_only),
+        render_missing_section(
+            reachable_unseen, request_only, body_only, total_responses
+        ),
     ]
 
     return (

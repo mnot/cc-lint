@@ -27,7 +27,7 @@ from cc_lint.cooccur import (
     ranked_bundles,
     ranked_marginals,
 )
-from cc_lint.fingerprint import UNMATCHED, default_fingerprinter
+from cc_lint.fingerprint import ASN_OPERATORS, UNMATCHED, default_fingerprinter
 from cc_lint.header_categories import categorize_header_bytes
 from cc_lint.header_census import Census, Cluster, build_census
 from cc_lint.histograms import (
@@ -38,6 +38,7 @@ from cc_lint.histograms import (
 from cc_lint.hll import hll_estimate
 from cc_lint.recipes import recipe_tokens
 from cc_lint.report.severity import (
+    MIN_RESPONSES_FOR_UNSEEN,
     build_category_index,
     build_severity_index,
     build_summary_index,
@@ -917,21 +918,28 @@ def _render_asn(
         "## Top networks (ASN)",
         "",
         "Autonomous System the crawl-time IP resolved to, by response count. "
-        "Networks without a layer label are not yet in the fingerprint table.",
+        "**Operator** names who owns the network (a seeded map of well-known "
+        "ASNs); **Layer** is the header-derived fingerprint, if any. The two "
+        "are complementary -- a generic cloud ASN carries no CDN fingerprint.",
         "",
     ]
     if truncated:
         lines.append("_Long tail elided during shuffle; head only._")
         lines.append("")
-    lines.append("| ASN | Layer | Responses | % of responses |")
-    lines.append("| --- | --- | --- | --- |")
+    lines.append("| ASN | Operator | Layer | Responses | % of responses |")
+    lines.append("| --- | --- | --- | --- | --- |")
     for asn_str, count in ranked:
         try:
-            label = asn_to_layer.get(int(asn_str), "")
+            asn_int: Optional[int] = int(asn_str)
         except ValueError:
-            label = ""
+            asn_int = None
+        label = asn_to_layer.get(asn_int, "") if asn_int is not None else ""
+        operator = ASN_OPERATORS.get(asn_int, "") if asn_int is not None else ""
         pct = (count / total_responses * 100) if total_responses else 0
-        lines.append(f"| AS{asn_str} | {label} | {_fmt_count(count)} | {pct:.1f}% |")
+        lines.append(
+            f"| AS{asn_str} | {operator} | {label} | "
+            f"{_fmt_count(count)} | {pct:.1f}% |"
+        )
     lines.append("")
     return lines
 
@@ -971,7 +979,11 @@ def _render_vary_section(vary: Dict[str, Any]) -> List[str]:
 
     lines.append("### High-interest axes")
     lines.append("")
-    axes_entries = [(axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES]
+    axes_entries = sorted(
+        ((axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
     lines.extend(
         _render_marginal_md(axes_entries, marg_hlls, denom, show_registered=False)
     )
@@ -1169,8 +1181,10 @@ def _render_cooccur_section(cooccur: Dict[str, Any]) -> List[str]:
         "## Header co-occurrence",
         "",
         "Which security / policy response headers travel together. A *bundle* "
-        "is the set of those headers present on a response (from a fixed "
-        f"curated alphabet); `{EMPTY_BUNDLE_LABEL}` means none were present. "
+        "is the set of those headers present on a response. The alphabet is "
+        "scoped to a fixed, curated set of security/policy headers (configured "
+        "in `cooccur_alphabet.toml`) so the bundle space stays bounded; "
+        f"`{EMPTY_BUNDLE_LABEL}` means none were present. "
         "*Responses* is occurrence-weighted; *Sites* is a HyperLogLog estimate "
         f"of distinct operators. Shares are of all {_fmt_count(denom)} "
         "responses.",
@@ -1531,6 +1545,7 @@ def _render_unseen(
     reachable_unseen: List[str],
     request_only: List[str],
     body_only: List[str],
+    total_responses: int,
 ) -> List[str]:
     if not (reachable_unseen or request_only or body_only):
         return []
@@ -1540,6 +1555,13 @@ def _render_unseen(
             f"**Reachable but not triggered ({len(reachable_unseen)}):** "
             + ", ".join(f"`{n}`" for n in reachable_unseen)
         )
+        if total_responses < MIN_RESPONSES_FOR_UNSEEN:
+            lines.append("")
+            lines.append(
+                "_This run analysed too few responses for this list to be "
+                "meaningful -- many of these notes fire readily in a full crawl "
+                "and show as unseen here purely because the sample is small._"
+            )
         lines.append("")
     if body_only:
         lines.append(
@@ -1645,5 +1667,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(_render_note_cooccur_section(data.get("note_cooccur") or {}))
     lines.extend(_render_transition_section(data.get("transition") or {}))
     lines.extend(_render_census(census))
-    lines.extend(_render_unseen(reachable_unseen, request_only, body_only))
+    lines.extend(
+        _render_unseen(reachable_unseen, request_only, body_only, total_responses)
+    )
     return "\n".join(lines).rstrip() + "\n"

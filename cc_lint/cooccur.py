@@ -8,8 +8,9 @@ CDN/framework default? Conditioning the bundles on the infrastructure
 fingerprint (#4) is the high-value view -- "platform X's default header
 set."
 
-The unit is the **bundle**: the subset of a curated security/policy header
-alphabet (:data:`SECURITY_HEADERS`) that is present on a response,
+The unit is the **bundle**: the subset of a curated header alphabet (loaded
+from ``cooccur_alphabet.toml`` via :func:`default_security_headers`; the
+default is the security/policy posture set) that is present on a response,
 normalised as a recipe (sorted, deduped, ``", "``-joined). Bundles reuse
 the generic collect / merge / trim machinery in :mod:`cc_lint.recipes`,
 exactly as :mod:`cc_lint.vary` does; this module is just the
@@ -18,7 +19,7 @@ header-specific normalisation layer.
 Cardinality discipline (issue #6's first concern). Bundling over *all*
 present headers is ~unique per response and unbounded across the corpus.
 Restricting to a fixed ~16-name alphabet bounds the bundle space: at most
-``2**len(SECURITY_HEADERS)`` keys in theory, a few hundred in practice, and
+``2**len(alphabet)`` keys in theory, a few hundred in practice, and
 the ``TOP_K`` trim caps the tail regardless. Three measures ride along, all
 bounded by the same alphabet:
 
@@ -28,7 +29,7 @@ bounded by the same alphabet:
 - **marginals** -- per individual header present. The denominators for
   conditional lifts.
 - **pairs** -- sorted 2-tuples of co-present headers, bounded at
-  ``C(len(SECURITY_HEADERS), 2)`` keys. Gives exact conditional lifts
+  ``C(len(alphabet), 2)`` keys. Gives exact conditional lifts
   ``P(A|B) = pairs(A,B) / marginals(B)`` without summing over the
   (trim-lossy) bundle distribution.
 
@@ -56,9 +57,12 @@ Serialized ``cooccur`` block (round-trips the JSONProtocol shuffle)::
     }
 """
 
+import sys
 from collections import Counter
+from functools import lru_cache
+from importlib.resources import files
 from itertools import combinations
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from cc_lint.recipes import (
     merge_recipe_dict,
@@ -67,36 +71,69 @@ from cc_lint.recipes import (
     trim_recipe_dict,
 )
 
-# The curated security / policy response-header alphabet. Lowercased to match
-# the normalised header names cc-lint works with. Kept as an explicit, ordered
-# tuple (not derived) so the bundle space is a stable, reviewable set: every
-# name here is a header whose presence is a deliberate security/availability
-# posture choice and a candidate for CDN/framework defaulting. Adding a name
-# widens the alphabet (and the bundle/pair cardinality); do it consciously.
-SECURITY_HEADERS: tuple[str, ...] = (
-    "strict-transport-security",
-    "content-security-policy",
-    "content-security-policy-report-only",
-    "x-frame-options",
-    "x-content-type-options",
-    "referrer-policy",
-    "permissions-policy",
-    "cross-origin-opener-policy",
-    "cross-origin-embedder-policy",
-    "cross-origin-resource-policy",
-    "x-xss-protection",
-    "x-permitted-cross-domain-policies",
-    "origin-agent-cluster",
-    "report-to",
-    "reporting-endpoints",
-    "nel",
-)
-
-SECURITY_HEADER_SET = frozenset(SECURITY_HEADERS)
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - exercised only on 3.9/3.10
+    import tomli as tomllib
 
 # Recipe label for a response that carried none of the alphabet's headers.
 # Not a header name, so renderers treat it as a plain label.
 EMPTY_BUNDLE_LABEL = "(none)"
+
+
+def _parse_alphabet(data: Dict[str, Any]) -> Tuple[str, ...]:
+    """Validate a parsed ``cooccur_alphabet.toml`` and return the header tuple.
+
+    The alphabet must be a non-empty array of non-empty strings; names are
+    lowercased (to match cc-lint's normalised header names) and de-duplicated
+    while preserving order, so the bundle space stays a stable, reviewable set.
+    """
+    raw = data.get("headers")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("cooccur alphabet: 'headers' must be a non-empty array")
+    if not all(isinstance(name, str) and name for name in raw):
+        raise ValueError("cooccur alphabet: 'headers' must be non-empty strings")
+    seen: Dict[str, None] = {}
+    for name in raw:
+        seen.setdefault(name.lower(), None)
+    return tuple(seen)
+
+
+def load_security_headers(path: Optional[str] = None) -> Tuple[str, ...]:
+    """Load and validate the co-occurrence header alphabet.
+
+    With ``path`` unset, reads the table shipped inside the package; pass a
+    path to override it (mirrors :func:`cc_lint.fingerprint.load_fingerprinter`).
+    Raises ``ValueError`` on a malformed table so a bad edit fails fast.
+    """
+    if path is not None:
+        with open(path, "rb") as handle:
+            data = tomllib.load(handle)
+    else:
+        text = (files("cc_lint") / "cooccur_alphabet.toml").read_text(encoding="utf-8")
+        data = tomllib.loads(text)
+    return _parse_alphabet(data)
+
+
+@lru_cache(maxsize=1)
+def default_security_headers() -> Tuple[str, ...]:
+    """The packaged co-occurrence alphabet, loaded once per process.
+
+    Falls back to a ``cooccur_alphabet.toml`` in the working directory if the
+    packaged resource can't be read -- on EMR the table is shipped via
+    ``--files`` (which lands it in the mapper's cwd), mirroring how
+    :func:`cc_lint.fingerprint.default_fingerprinter` finds its table.
+    """
+    try:
+        return load_security_headers()
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return load_security_headers("cooccur_alphabet.toml")
+
+
+@lru_cache(maxsize=1)
+def _alphabet_set() -> "frozenset[str]":
+    """Membership set for the alphabet, built once (mapper hot path)."""
+    return frozenset(default_security_headers())
 
 
 def present_security_headers(header_names: Iterable[str]) -> List[str]:
@@ -105,7 +142,8 @@ def present_security_headers(header_names: Iterable[str]) -> List[str]:
     ``header_names`` are expected already lowercased (cc-lint normalises
     header names before they reach here).
     """
-    return sorted({name for name in header_names if name in SECURITY_HEADER_SET})
+    alphabet = _alphabet_set()
+    return sorted({name for name in header_names if name in alphabet})
 
 
 def bundle_key(present: List[str]) -> str:

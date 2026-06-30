@@ -106,16 +106,20 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Headers by infrastructure", html)
         # Per-note breakdown rendered on the note card.
         self.assertIn("By infrastructure", html)
-        # Top-ASN section: AS number plus the known-vendor label.
+        # Top-ASN section: AS number, operator label (issue #28), header.
         self.assertIn('id="asn"', html)
         self.assertIn("AS13335", html)
         self.assertIn("Top networks (ASN)", html)
+        self.assertIn("<th>Operator</th>", html)
+        self.assertIn("Amazon (AWS)", html)  # AS16509 -> operator label
         # Markdown parity.
         self.assertIn("## Infrastructure", md)
         self.assertIn("matched no known layer", md)
         self.assertIn("By infrastructure:", md)
         self.assertIn("## Top networks (ASN)", md)
         self.assertIn("AS13335", md)
+        self.assertIn("| Operator |", md)
+        self.assertIn("Amazon (AWS)", md)
 
     def test_census_section(self) -> None:
         data = {
@@ -179,6 +183,20 @@ class TestRenderer(unittest.TestCase):
         self.assertTrue(body_only, "no body-only note in installed httplint")
         self.assertIn(request_only[0], html)
         self.assertIn(body_only[0], html)
+
+    def test_unseen_caveat_on_small_run(self) -> None:
+        # A small run (SAMPLE_STATS has 1,234 responses) must carry the
+        # sample-size caveat so the Unseen list isn't misread (issue #28).
+        html, md = self._render_both(SAMPLE_STATS)
+        self.assertIn("too few responses", html)
+        self.assertIn("too few responses", md)
+
+    def test_unseen_caveat_absent_on_full_run(self) -> None:
+        data = dict(SAMPLE_STATS)
+        data["total_responses"] = 123_000_000
+        html, md = self._render_both(data)
+        self.assertNotIn("too few responses", html)
+        self.assertNotIn("too few responses", md)
 
     def test_truncation_flags_show(self) -> None:
         data = {
@@ -549,6 +567,34 @@ class TestRenderer(unittest.TestCase):
     def test_no_vary_section_absent(self) -> None:
         html = self._render({"total_responses": 5, "notes": {}})
         self.assertNotIn('id="vary"', html)
+
+    def test_high_interest_axes_sorted_by_frequency(self) -> None:
+        # The high-interest axes table sorts by occurrence, not configured
+        # order (cookie, accept-language, accept-encoding, user-agent). #28.
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "vary": {
+                "responses_with_vary": 100,
+                "recipes": {"occ": {"accept-encoding": 90}, "hlls": {}},
+                "marginals": {
+                    "occ": {
+                        "accept-encoding": 90,
+                        "user-agent": 50,
+                        "cookie": 30,
+                        "accept-language": 10,
+                    },
+                    "hlls": {},
+                },
+            },
+        }
+        _html, md = self._render_both(data)
+        section = md.split("### High-interest axes", 1)[1].split("###", 1)[0]
+        positions = [
+            section.index(axis)
+            for axis in ("accept-encoding", "user-agent", "cookie", "accept-language")
+        ]
+        self.assertEqual(positions, sorted(positions))
 
     def test_cache_control_section_rendered(self) -> None:
         data: Dict[str, Any] = {

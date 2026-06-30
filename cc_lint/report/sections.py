@@ -25,7 +25,7 @@ from cc_lint.cooccur import (
     ranked_bundles,
     ranked_marginals,
 )
-from cc_lint.fingerprint import UNMATCHED
+from cc_lint.fingerprint import ASN_OPERATORS, UNMATCHED
 from cc_lint.header_categories import categorize_header_bytes
 from cc_lint.header_census import Census, Cluster, HeaderEntry
 from cc_lint.histograms import (
@@ -35,7 +35,7 @@ from cc_lint.histograms import (
 )
 from cc_lint.hll import hll_estimate
 from cc_lint.recipes import recipe_tokens
-from cc_lint.report.severity import build_summary_index
+from cc_lint.report.severity import MIN_RESPONSES_FOR_UNSEEN, build_summary_index
 from cc_lint.report.styles import METHODOLOGY_NOTE, TRUNCATED_NOTE
 from cc_lint.transition import transition_rows
 from cc_lint.vary import (
@@ -1173,13 +1173,16 @@ def render_asn_section(
     rows: List[str] = []
     for asn_str, count in ranked:
         try:
-            label = asn_to_layer.get(int(asn_str), "")
+            asn_int = int(asn_str)
         except ValueError:
-            label = ""
+            asn_int = None
+        label = asn_to_layer.get(asn_int, "") if asn_int is not None else ""
+        operator = ASN_OPERATORS.get(asn_int, "") if asn_int is not None else ""
         pct = (count / total_responses * 100) if total_responses else 0
         rows.append(
             "<tr>"
             f"<td>AS{html.escape(asn_str)}</td>"
+            f"<td>{html.escape(operator)}</td>"
             f"<td>{html.escape(label)}</td>"
             f"<td>{_format_count(count)}</td>"
             f"<td>{pct:.1f}%</td>"
@@ -1190,11 +1193,14 @@ def render_asn_section(
         "<h2>Top networks (ASN)</h2>"
         '<p class="muted">Autonomous System the crawl-time IP resolved to, by '
         "response count. Reflects the outermost network the crawler reached "
-        "(a fronting CDN, or the origin's host). Networks without a layer "
-        "label are not yet in the fingerprint table.</p>"
+        "(a fronting CDN, or the origin's host). <strong>Operator</strong> "
+        "names who owns the network (a seeded map of well-known ASNs); "
+        "<strong>Layer</strong> is the header-derived fingerprint, if any. The "
+        "two are complementary -- a generic cloud ASN carries no CDN "
+        "fingerprint, which is itself informative.</p>"
         f"{TRUNCATED_NOTE if truncated else ''}"
         '<table class="data-table">'
-        "<thead><tr><th>ASN</th><th>Layer</th><th>Responses</th>"
+        "<thead><tr><th>ASN</th><th>Operator</th><th>Layer</th><th>Responses</th>"
         "<th>% of responses</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</section>"
@@ -1459,7 +1465,11 @@ def render_vary_section(vary: Dict[str, Any]) -> str:
         '<p class="muted">Prevalence of the cache-key / availability axes, as '
         "a share of responses carrying <code>Vary</code>.</p>"
     )
-    axes_entries = [(axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES]
+    axes_entries = sorted(
+        ((axis, marg_occ.get(axis, 0)) for axis in HIGH_INTEREST_AXES),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
     blocks.append(
         _render_marginal_table(axes_entries, marg_hlls, denom, show_registered=False)
     )
@@ -1789,7 +1799,9 @@ def render_cooccur_section(cooccur: Dict[str, Any], roles: Dict[str, str]) -> st
     blocks: List[str] = [
         '<p class="muted">Which security / policy response headers travel '
         "together. A <strong>bundle</strong> is the set of those headers "
-        "present on a response (drawn from a fixed curated alphabet); "
+        "present on a response. The alphabet is scoped to a fixed, curated set "
+        "of security/policy headers (configured in "
+        "<code>cooccur_alphabet.toml</code>) so the bundle space stays bounded; "
         f"<em>{html.escape(EMPTY_BUNDLE_LABEL)}</em> means none were present. "
         "<em>Responses</em> is occurrence-weighted (one CDN origin can emit a "
         "bundle across millions of responses); <em>Sites</em> is a "
@@ -2035,14 +2047,24 @@ def render_missing_section(
     reachable_unseen: List[str],
     request_only: List[str],
     body_only: List[str],
+    total_responses: int,
 ) -> str:
     if not (reachable_unseen or request_only or body_only):
         return ""
+    reachable_body = (
+        "httplint defines these warn/bad notes and cc-lint's response-header "
+        "pipeline can reach them; none of them fired on any analysed response."
+    )
+    if total_responses < MIN_RESPONSES_FOR_UNSEEN:
+        reachable_body += (
+            " <strong>This run analysed too few responses for this list to be "
+            "meaningful</strong> -- many of these notes fire readily in a full "
+            "crawl and show as unseen here purely because the sample is small."
+        )
     blocks = [
         _render_unseen_subblock(
             "Reachable but not triggered",
-            "httplint defines these warn/bad notes and cc-lint's response-header "
-            "pipeline can reach them; none of them fired on any analysed response.",
+            reachable_body,
             reachable_unseen,
         ),
         _render_unseen_subblock(
