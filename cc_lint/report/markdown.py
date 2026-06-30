@@ -225,6 +225,41 @@ def _render_var_table(
     return lines
 
 
+def _render_field_error_block(var_name: str, counts: Dict[str, int]) -> List[str]:
+    """Render the STRUCTURED_FIELD_PARSE_ERROR.field_error grouping.
+
+    Mirrors the HTML renderer: the "field: error" composite keys are grouped
+    by field, ordered by per-field total, and capped at 50 fields. The HTML
+    table puts each field's errors in a bulleted cell; here they are joined
+    into one "Errors" cell as "error (count)" pairs.
+    """
+    grouped: Dict[str, List[Tuple[str, int]]] = {}
+    for full_key, count in counts.items():
+        field, _, error = full_key.partition(": ")
+        grouped.setdefault(field, []).append((error or full_key, count))
+
+    field_totals = {f: sum(c for _, c in errs) for f, errs in grouped.items()}
+    sorted_fields = sorted(field_totals.items(), key=lambda item: item[1], reverse=True)
+
+    heading = _VAR_LABELS_MD.get(var_name, var_name)
+    lines = [
+        f"#### {heading}",
+        "",
+        "| Field | Note fires | Errors |",
+        "| --- | --- | --- |",
+    ]
+    for field, total in sorted_fields[:50]:
+        errors = sorted(grouped[field], key=lambda item: item[1], reverse=True)
+        err_text = "; ".join(
+            f"{_md_escape_pipe(err)} ({_fmt_count(count)})" for err, count in errors
+        )
+        lines.append(f"| {_md_escape_pipe(field)} | {_fmt_count(total)} | {err_text} |")
+    if len(sorted_fields) > 50:
+        lines.append(f"_… {len(sorted_fields) - 50} more fields not shown …_")
+    lines.append("")
+    return lines
+
+
 def _render_note_block(
     note_id: str,
     note_data: Dict[str, Any],
@@ -275,6 +310,9 @@ def _render_note_block(
             continue
         if truncated_vars.get(var_name):
             lines.append(f"_{var_name}: long tail elided during shuffle; head only._")
+        if var_name == "field_error":
+            lines.extend(_render_field_error_block(var_name, counts))
+            continue
         largest = field_size_max if var_name == "field_name" else None
         samples = field_samples if var_name == "field_name" else None
         lines.extend(

@@ -209,6 +209,38 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("require-corp; foo", md)
         self.assertIn("http://via.example/", md)
 
+    def test_field_error_grouping_renders_in_both(self) -> None:
+        # The field_error var carries "field: error" composite keys. Both
+        # renderers must group them by field (CLAUDE.md HTML/Markdown sync),
+        # not show the raw composite strings.
+        data = {
+            "total_responses": 100,
+            "field_counts": {},
+            "unprocessed_counts": {},
+            "notes": {
+                "STRUCTURED_FIELD_PARSE_ERROR": {
+                    "count": 9,
+                    "samples": [],
+                    "vars": {
+                        "field_error": {
+                            "cache-control: bad token": 5,
+                            "cache-control: trailing comma": 2,
+                            "via: bad token": 2,
+                        },
+                    },
+                }
+            },
+        }
+        html, md = self._render_both(data)
+        # HTML groups by field with a per-field total in the row header.
+        self.assertIn("field-error", html)
+        # Markdown must group too: the field name appears once with both of
+        # its errors, and the raw composite key must NOT appear verbatim.
+        self.assertIn("| cache-control |", md)
+        self.assertIn("bad token (5)", md)
+        self.assertIn("trailing comma (2)", md)
+        self.assertNotIn("cache-control: bad token", md)
+
     def test_sites_hll_surfaces(self) -> None:
         global_hll = make_registers(HLL_P_GLOBAL)
         for i in range(50):
