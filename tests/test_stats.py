@@ -10,7 +10,8 @@ from httplint.note import Note, categories, levels
 
 from cc_lint.hll import hll_estimate
 from cc_lint.ipasn import IpAsnTable
-from cc_lint.stats import StatsCollector, _redact_sensitive_value, create_sample
+from cc_lint.redact import redact_sensitive_value
+from cc_lint.stats import StatsCollector, create_sample
 
 
 def _attach_note(linter: HttpResponseLinter, note: Note) -> None:
@@ -715,7 +716,7 @@ class TestCapturedSampleHygiene(unittest.TestCase):
 
     def test_redact_strips_signature_query_params(self) -> None:
         raw = "https://nel.example/reports?app=heroku-nel&s=abc123DEF&ttl=60"
-        out = _redact_sensitive_value(raw)
+        out = redact_sensitive_value(raw)
         self.assertNotIn("abc123DEF", out)
         self.assertIn("s=[redacted]", out)
         # Non-sensitive params are untouched.
@@ -723,11 +724,11 @@ class TestCapturedSampleHygiene(unittest.TestCase):
         self.assertIn("ttl=60", out)
 
     def test_redact_handles_token_and_signature_names(self) -> None:
-        out = _redact_sensitive_value("/cb?token=SEKRET&x-amz-signature=ZZZ&p=1")
+        out = redact_sensitive_value("/cb?token=SEKRET&x-amz-signature=ZZZ&p=1")
         self.assertEqual(out, "/cb?token=[redacted]&x-amz-signature=[redacted]&p=1")
 
     def test_redact_leaves_plain_value_alone(self) -> None:
-        self.assertEqual(_redact_sensitive_value("nosniff"), "nosniff")
+        self.assertEqual(redact_sensitive_value("nosniff"), "nosniff")
 
     def test_sensitive_header_value_not_captured(self) -> None:
         # Set-Cookie carries a session secret as its whole value; the sample
@@ -767,6 +768,29 @@ class TestCapturedSampleHygiene(unittest.TestCase):
         )
         assert sample is not None
         self.assertIn("DENY", sample["vars"]["field_values"])
+
+    def test_note_level_pool_redacts_signature_in_value_var(self) -> None:
+        # The note-level pool (no var_name) dumps note.vars verbatim; a raw
+        # header slice in `value`/`context` must still have signatures redacted.
+        linter = _linter_for("http://x.example/")
+        note: Any = _WarnNote("s")
+        note.vars = {"value": "https://nel.example/r?s=SIGVALUE&app=heroku"}
+        sample = create_sample(note, linter)
+        assert sample is not None
+        self.assertNotIn("SIGVALUE", sample["vars"]["value"])
+        self.assertIn("[redacted]", sample["vars"]["value"])
+        self.assertIn("app=heroku", sample["vars"]["value"])
+
+    def test_note_level_pool_drops_sensitive_header_raw_value(self) -> None:
+        # When the offending header is itself a credential, the raw-value vars
+        # are dropped entirely rather than carried.
+        linter = _linter_for("http://x.example/")
+        note: Any = _WarnNote("s")
+        note.vars = {"field_name": "set-cookie", "value": "sid=DEADBEEF"}
+        sample = create_sample(note, linter)
+        assert sample is not None
+        self.assertNotIn("DEADBEEF", sample["vars"]["value"])
+        self.assertEqual(sample["vars"]["value"], "[redacted: sensitive header]")
 
 
 if __name__ == "__main__":

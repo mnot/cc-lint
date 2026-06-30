@@ -1,4 +1,3 @@
-import re
 from collections import Counter
 from typing import (
     Any,
@@ -37,6 +36,11 @@ from cc_lint.note_cooccur import (
     note_pair_keys,
 )
 from cc_lint.recipes import RecipeStats, recipe_key
+from cc_lint.redact import (
+    RAW_VALUE_NOTE_VARS,
+    SENSITIVE_FIELD_NAMES,
+    redact_sensitive_value,
+)
 from cc_lint.top_sites import normalize_site
 from cc_lint.transition import (
     TRANSITION_PAIRS,
@@ -155,34 +159,6 @@ SAMPLES_TO_COLLECT["VARY_COMPLEX"] = {
 # the report or the shuffle. Applied per value, after redaction, before repr().
 MAX_FIELD_VALUE_LEN = 300
 
-# Headers whose *value* is a credential in its entirety -- a session cookie, a
-# bearer token, an auth challenge. We still record that the note fired (the
-# sample keeps its URL + site), but never carry the on-the-wire value into the
-# report or the shuffle. Lowercased; matched against the field name. Issue #28.
-SENSITIVE_FIELD_NAMES: FrozenSet[str] = frozenset(
-    "set-cookie set-cookie2 cookie authorization proxy-authorization "
-    "www-authenticate proxy-authenticate".split()
-)
-
-# Query-string parameters whose value is a signature / token / key. A captured
-# header value can embed a signed URL (e.g. a `Reporting-Endpoints` endpoint
-# `https://.../reports?...&s=<sig>`); we redact the credential while keeping
-# the rest legible. Matched case-insensitively against `?name=`/`&name=`. #28.
-_SENSITIVE_QUERY_PARAMS: Tuple[str, ...] = tuple(
-    "signature sig s token access_token auth key apikey api_key hmac "
-    "x-amz-signature x-amz-security-token x-goog-signature".split()
-)
-_SIGNATURE_PARAM_RE = re.compile(
-    r"([?&](?:" + "|".join(re.escape(p) for p in _SENSITIVE_QUERY_PARAMS) + r")=)"
-    r"[^&\s]+",
-    re.IGNORECASE,
-)
-
-
-def _redact_sensitive_value(value: str) -> str:
-    """Redact signature/token query parameters embedded in a captured value."""
-    return _SIGNATURE_PARAM_RE.sub(r"\1[redacted]", value)
-
 
 # Distinct sites retained per (var, value) sample bucket. The collection side
 # (StatsCollector._collect_samples) and the reducer-side merge
@@ -257,6 +233,10 @@ def create_sample(
     payload the report actually reads is carried -- the on-the-wire header
     value(s) for ``field_name`` samples -- so the discarded note-attribute dump
     doesn't ride the mapper->reducer shuffle for every retained sample.
+
+    Both branches scrub on-the-wire secrets before they ride the shuffle:
+    signed-URL signatures are redacted everywhere, and a value belonging to a
+    credential-bearing header (see :data:`SENSITIVE_FIELD_NAMES`) is dropped.
     """
     sample_url = getattr(linter, "base_uri", None)
     if not sample_url:
@@ -276,7 +256,7 @@ def create_sample(
             for h_name, h_val in linter.headers.text:
                 h_name_str = str(h_name)
                 if h_name_str.lower() == target_field_name:
-                    h_val_str = _redact_sensitive_value(str(h_val))
+                    h_val_str = redact_sensitive_value(str(h_val))
                     if len(h_val_str) > MAX_FIELD_VALUE_LEN:
                         h_val_str = h_val_str[:MAX_FIELD_VALUE_LEN] + "…[truncated]"
                     values.append(h_val_str)
@@ -284,12 +264,22 @@ def create_sample(
                 note_vars["field_values"] = repr(values)
     else:
         filtered_keys = ["vars", "subnotes", "subject", "field_type", "message_type"]
+        # A value-bearing note var (value/context) is a raw header slice; drop
+        # it when the offending header is itself a credential, redact signed-URL
+        # signatures otherwise. See issue #28.
+        sensitive = (
+            str(note.vars.get("field_name", "")).lower() in SENSITIVE_FIELD_NAMES
+        )
         for key, val in vars(note).items():
             if key not in filtered_keys:
-                note_vars[key] = str(val)
+                note_vars[key] = redact_sensitive_value(str(val))
         for key, val in note.vars.items():
-            if key not in filtered_keys:
-                note_vars[key] = str(val)
+            if key in filtered_keys:
+                continue
+            if sensitive and key in RAW_VALUE_NOTE_VARS:
+                note_vars[key] = "[redacted: sensitive header]"
+            else:
+                note_vars[key] = redact_sensitive_value(str(val))
 
     return {"url": sample_url, "vars": note_vars, "site": site}
 
