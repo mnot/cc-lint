@@ -649,6 +649,12 @@ def render_health_summary(severity_counts: Dict[str, int]) -> str:
         "httplint finding it produced. <em>Clean</em> means httplint found "
         "nothing worth reporting on that response. Per-response, not "
         "per-site &mdash; popular sites contribute more responses.</p>"
+        '<p class="muted">The bucket is only as meaningful as httplint&rsquo;s '
+        "per-note severity, and one prevalent pattern can dominate. Notably, "
+        "<code>Pragma</code> on a response is flagged <code>BAD</code> "
+        "(<code>REQUEST_HDR_IN_RESPONSE</code> &mdash; Pragma is a request "
+        "header), so the long-standing <code>Pragma: no-cache</code> response "
+        "convention inflates the <code>BAD</code> share here.</p>"
         f'<div class="health-bar" role="img" aria-label="{bar_label}">'
         f'{"".join(bar_segments)}</div>'
         '<table class="data-table">'
@@ -733,8 +739,11 @@ def render_field_counts_section(
     return (
         '<section id="headers">'
         "<h2>Top Response Headers</h2>"
-        '<p class="muted">Most common response header names, with the share of '
-        "responses that included at least one instance.</p>"
+        '<p class="muted">Most common response header names. Count is per '
+        "header occurrence &mdash; a response that sends a header more than "
+        "once counts each line &mdash; so the percentage is occurrences "
+        "&divide; responses and may slightly exceed a header&rsquo;s "
+        "response-presence count shown in other sections.</p>"
         f"{TRUNCATED_NOTE if truncated else ''}"
         '<table class="data-table">'
         "<thead><tr><th>Header</th><th>Count</th><th>% of responses</th></tr></thead>"
