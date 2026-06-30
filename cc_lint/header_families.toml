@@ -35,11 +35,20 @@ prefixes = [
   "x-pop",
   "x-edge-",
   "x-upstream",
+  "x-amz-cf-pop",       # CloudFront edge point-of-presence
+  "x-vhost",
+  "host-header",
+  "x-pantheon-styx-hostname",
+  "x-dispatcher",       # AEM dispatcher
+  "x-ftr-backend",
+  "x-ftr-balancer",
 ]
 # Note: no broad "x-proxy-" prefix here. It would shadow caching's specific
 # "x-proxy-cache" (families are tried in file order, routing first), and
 # x-proxy-cache is a cache-status header, not routing. Rare other x-proxy-*
-# names fall to "other" rather than being mislabelled routing.
+# names fall to "other" rather than being mislabelled routing. Same reasoning
+# keeps vendor edge/PoP entries specific (x-amz-cf-pop) rather than a broad
+# "x-amz-cf-" that would also swallow the request-id observability header.
 
 [[family]]
 id = "caching"
@@ -50,7 +59,7 @@ prefixes = [
   "x-varnish",
   "x-vercel-cache",
   "x-nextjs-cache",
-  "x-drupal-cache",
+  "x-drupal-",          # x-drupal-dynamic-cache, x-drupal-cache-tags, ...
   "x-litespeed-cache",
   "x-fastcgi-cache",
   "x-proxy-cache",
@@ -58,6 +67,18 @@ prefixes = [
   "x-hits",
   "surrogate-",
   "cf-cache-status",
+  "cf-edge-cache",
+  "cf-apo-via",         # Cloudflare Automatic Platform Optimization
+  "x-cdn-cache",
+  "cdn-cache",
+  "x-td-cache",
+  "x-ftr-cache-status",
+  "ki-cache",           # Kinsta edge cache
+  "ki-cf-cache-status",
+  "ki-edge",
+  "akamai-cache-status",
+  "akamai-true-ttl",
+  "akamai-x-true-cache-ttl",
 ]
 
 [[family]]
@@ -80,6 +101,22 @@ prefixes = [
   "x-timer",
   "x-render-",
   "x-rblx-",
+  "cf-ray",                          # Cloudflare per-request trace id
+  "x-amz-cf-id",                     # CloudFront request id
+  "x-amz-apigw-id",
+  "x-amz-request-id",
+  "request-context",                 # Azure Application Insights correlation
+  "x-envoy-",                        # upstream-service-time, decorator-operation
+  "akamai-grn",                      # Akamai global request number
+  "x-akamai-request-id",
+  "x-akamai-global-request-number",
+  "x-styx-req-id",
+  "x-arc-request-id",
+  "x-arc-pb-request-id",
+  "x-iinfo",                         # Imperva/Incapsula request info
+  "x-rid",
+  "x-vercel-id",                     # Vercel request id
+  "x-azure-ref",                     # Azure Front Door reference id
 ]
 
 [[family]]
