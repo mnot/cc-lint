@@ -686,6 +686,12 @@ class StatsCollector:
         defect note fired), so the per-occurrence denominator is
         ``total_responses`` (read back in ``to_dict``).
         """
+        # Note identity is the class name, so a finding class appearing at two
+        # tree positions on one response collapses to one id (consistent with
+        # fired/marginals, which already dedupe same-class notes). The rare
+        # cost is in the pairs view: if class A is both an ancestor of B and a
+        # separate sibling of B, the (A, B) edge is treated as mechanical and
+        # B's genuine sibling co-occurrence is suppressed. Accepted limitation.
         fired: Set[str] = set()
         lineage: Set[FrozenSet[str]] = set()
 
