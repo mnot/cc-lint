@@ -14,6 +14,8 @@ from cc_lint.header_census import build_census
 from cc_lint.hll import hll_estimate
 from cc_lint.report.markdown import render_markdown
 from cc_lint.report.sections import (
+    TOC_SCRIPT,
+    build_toc,
     count_total_notes,
     render_asn_section,
     render_cache_control_section,
@@ -149,6 +151,13 @@ def _build_html(data: Dict[str, Any]) -> str:
         ),
     ]
 
+    # Hero + run-context lead; the table of contents sits between them and the
+    # content sections (it derives its entries by scanning those sections, so
+    # build it from the content slice only).
+    lead_html = "".join(body_parts[:2])
+    content_html = "".join(body_parts[2:])
+    toc_html = build_toc(content_html)
+
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -159,7 +168,8 @@ def _build_html(data: Dict[str, Any]) -> str:
         f"  <style>{STYLE}</style>\n"
         "</head>\n"
         "<body>\n"
-        f"{''.join(body_parts)}\n"
+        f"{lead_html}{toc_html}{content_html}\n"
+        f"{TOC_SCRIPT}\n"
         "</body>\n"
         "</html>\n"
     )

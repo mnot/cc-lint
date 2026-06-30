@@ -11,6 +11,7 @@ fixed page structure.
 # scatter closely-related report code across modules without reducing coupling.
 
 import html
+import re
 import urllib.parse
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -131,6 +132,68 @@ def _field_samples_details(samples: List[Dict[str, Any]]) -> str:
         f"<summary>Samples ({_format_count(len(samples))})</summary>"
         f'<ul class="samples">{items}</ul>'
         "</details>"
+    )
+
+
+# ---- navigation ------------------------------------------------------------
+
+_TOC_SECTION_RE = re.compile(r'<section id="([^"]+)"><h2>(.*?)</h2>', re.DOTALL)
+_TOC_CATEGORY_RE = re.compile(
+    r'<section class="note-category" id="(cat-[^"]+)"><h3>(.*?)\s*<span', re.DOTALL
+)
+
+# Progressive enhancement: highlight the TOC link for the section currently in
+# view. The report is fully navigable without it (anchor links work plain).
+TOC_SCRIPT = """<script>
+(function () {
+  var links = {};
+  document.querySelectorAll('.toc a[href^="#"]').forEach(function (a) {
+    links[decodeURIComponent(a.getAttribute('href').slice(1))] = a;
+  });
+  if (!('IntersectionObserver' in window)) return;
+  var current = null;
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      var a = links[e.target.id];
+      if (!a || a === current) return;
+      if (current) current.classList.remove('active');
+      a.classList.add('active');
+      current = a;
+    });
+  }, { rootMargin: '0px 0px -75% 0px' });
+  document.querySelectorAll('section[id]').forEach(function (s) { obs.observe(s); });
+})();
+</script>"""
+
+
+def build_toc(body_html: str) -> str:
+    """Build a table-of-contents nav from the assembled report body.
+
+    Derives one entry per top-level ``<section id><h2>`` and nests the
+    per-category subsections under the Notes entry. Heading text is taken
+    verbatim from the already-rendered (trusted) markup, so empty sections
+    -- which render nothing -- are skipped automatically and the TOC can
+    never drift from what the report actually contains.
+    """
+    sections = _TOC_SECTION_RE.findall(body_html)
+    if not sections:
+        return ""
+    subcats = _TOC_CATEGORY_RE.findall(body_html)
+    sub_html = "".join(
+        f'<li><a href="#{sid}">{title.strip()}</a></li>' for sid, title in subcats
+    )
+    items: List[str] = []
+    for sid, title in sections:
+        link = f'<a href="#{sid}">{title.strip()}</a>'
+        if sid == "notes" and sub_html:
+            items.append(f'<li>{link}<ul class="toc-sub">{sub_html}</ul></li>')
+        else:
+            items.append(f"<li>{link}</li>")
+    return (
+        '<nav class="toc" aria-label="Contents">'
+        "<details open><summary>On this page</summary>"
+        f'<ul>{"".join(items)}</ul></details></nav>'
     )
 
 

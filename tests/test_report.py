@@ -1,6 +1,7 @@
 """Smoke tests for cc_lint.report's HTML + Markdown renderer."""
 
 import os
+import re
 import tempfile
 import unittest
 from typing import Any, Dict
@@ -78,6 +79,20 @@ class TestRenderer(unittest.TestCase):
         html = self._render({"total_responses": 0, "notes": {}})
         self.assertIn("<!doctype html>", html)
         self.assertIn("Responses analyzed", html)
+
+    def test_toc_navigation(self) -> None:
+        html = self._render(SAMPLE_STATS)
+        # The nav, a top-level section link, a nested note-category link, and
+        # the scrollspy script should all be present, and every TOC anchor
+        # must point at an id that actually exists in the document.
+        self.assertIn('<nav class="toc"', html)
+        self.assertIn('<a href="#notes">Notes</a>', html)
+        self.assertIn('class="toc-sub"', html)
+        self.assertIn("IntersectionObserver", html)
+        for anchor in re.findall(r'<a href="#([^"]+)">', html):
+            if anchor.startswith(("http", "//")):
+                continue
+            self.assertIn(f'id="{anchor}"', html, f"TOC anchor #{anchor} has no target")
 
     def test_infra_section(self) -> None:
         data = {

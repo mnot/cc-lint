@@ -295,6 +295,55 @@ STYLE = """
   section { margin-top: 2.5rem; }
   section:first-of-type { margin-top: 0; }
 
+  /* Table of contents. Inline collapsible block by default; docked into the
+     left gutter on wide viewports where there's room beside the centred
+     column. */
+  .toc { margin: 0 0 2rem; }
+  .toc details {
+    border: 1px solid var(--card-border);
+    border-radius: .5rem;
+    background: var(--card);
+    padding: .1rem .85rem;
+    font-size: .85em;
+  }
+  .toc summary {
+    cursor: pointer;
+    padding: .5rem 0;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-size: .85em;
+  }
+  .toc ul { list-style: none; margin: .25rem 0 .6rem; padding-left: 0; }
+  .toc li { margin: .12rem 0; line-height: 1.35; }
+  .toc a { color: var(--fg); }
+  .toc a:hover { color: var(--link); text-decoration: underline; }
+  .toc a.active { color: var(--link); font-weight: 600; }
+  .toc .toc-sub {
+    margin: .15rem 0 .4rem;
+    padding-left: .85rem;
+    border-left: 1px solid var(--card-border);
+  }
+  .toc .toc-sub a { color: var(--muted); }
+
+  @media (min-width: 96rem) {
+    .toc {
+      position: fixed;
+      top: 2rem;
+      left: calc((100vw - 64rem) / 2 - 15rem);
+      width: 13.5rem;
+      margin: 0;
+      max-height: calc(100vh - 4rem);
+      overflow-y: auto;
+    }
+    .toc details { padding: .35rem .85rem .6rem; }
+    /* Docked: stay open, drop the disclosure affordance. */
+    .toc summary { pointer-events: none; list-style: none; }
+    .toc summary::-webkit-details-marker { display: none; }
+    .toc summary::marker { content: ""; }
+  }
+
   /* Narrow viewports: let wide tables scroll inside themselves rather than
      forcing the whole page to scroll horizontally. */
   @media (max-width: 40rem) {
