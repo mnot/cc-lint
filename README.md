@@ -194,45 +194,8 @@ and any child-process failures.
 
 ---
 
-## Project layout
+## Contributing
 
-```
-cc_lint/
-├── cli.py / __main__.py  local `cc-lint lint` CLI
-├── crawling.py           HTTP-only WAT streaming for the CLI
-├── cc_paths.py           Common Crawl path helpers (CLI + EMR)
-├── linting.py            httplint wiring for WAT records
-├── stats.py              StatsCollector and per-note tracking config
-├── top_sites.py          Tranco top-N loader + site normalisation
-├── hll.py                HyperLogLog distinct-site estimator
-├── histograms.py         bucket scales for numeric note vars
-├── redact.py             scrub on-the-wire secrets from samples (#28)
-├── types.py              shared TypedDicts
-│   # analysis dimensions — each its own shuffle aggregation
-├── cooccur.py            header co-occurrence (#6)
-├── note_cooccur.py       finding co-occurrence (#7)
-├── transition.py         legacy/modern transition tax (#11)
-├── vary.py               Vary composition
-├── cache_control.py      Cache-Control recipes
-├── recipes.py            shared top-N recipe machinery
-├── fingerprint.py        infrastructure fingerprinting (#4)
-├── ipasn.py              offline IP->ASN from a CAIDA pfx2as snapshot (#4)
-├── header_categories.py  header byte-economics categories (#10)
-├── header_census.py      non-standard header census (#12)
-├── *.toml                data tables: fingerprints, header_families,
-│                         cooccur_alphabet
-├── report/
-│   ├── render.py         top-level orchestration (HTML + Markdown)
-│   ├── sections.py       HTML sections (incl. the TOC nav)
-│   ├── markdown.py       Markdown renderer
-│   ├── severity.py       Note-class severity / category / summary lookup
-│   └── styles.py         CSS
-└── emr/
-    ├── job.py            mrjob entry point; mapper/reducer; merge_* fns
-    ├── warc_source.py    requester-pays S3 + heartbeat WAT iterator
-    ├── warc_worker.py    fork-isolated per-WARC worker + pickle result
-    ├── split_paths.py    paths.gz -> N S3 chunk files
-    ├── finalize.py       part-* -> rendered report.html + report.md
-    ├── timing.py         EMR stderr.gz timing/failure summary
-    └── compat.py         Python 3.13+ `pipes` shim for mrjob
-```
+Development setup, the test / typecheck / lint workflow, commit
+conventions, and a tour of the project layout live in
+[CONTRIBUTING.md](CONTRIBUTING.md).
