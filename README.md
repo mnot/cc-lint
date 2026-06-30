@@ -13,9 +13,6 @@ There are two ways to run it, sharing the same linting and reporting code
   transient EMR cluster for a full-crawl analysis (~123M responses).
   Needs an AWS account and costs money per run.
 
-Contributor setup (tests, typecheck, lint) lives in
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
 ---
 
 ## Local run
