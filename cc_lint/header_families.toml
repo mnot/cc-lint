@@ -34,9 +34,12 @@ prefixes = [
   "x-lb-",
   "x-pop",
   "x-edge-",
-  "x-proxy-",
   "x-upstream",
 ]
+# Note: no broad "x-proxy-" prefix here. It would shadow caching's specific
+# "x-proxy-cache" (families are tried in file order, routing first), and
+# x-proxy-cache is a cache-status header, not routing. Rare other x-proxy-*
+# names fall to "other" rather than being mislabelled routing.
 
 [[family]]
 id = "caching"

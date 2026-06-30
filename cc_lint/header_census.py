@@ -299,6 +299,12 @@ def build_census(
     folded: Dict[str, int] = {}
     for raw_name, count in nonstandard_counts.items():
         name = raw_name.lower()
+        # x-crawler-* are Common-Crawl-injected, not part of the upstream
+        # response. The map-time source dicts already exclude them; skipping
+        # here too makes the renderers' "x-crawler-* excluded" claim
+        # self-evident rather than dependent on that upstream invariant.
+        if name.startswith("x-crawler-"):
+            continue
         if classify_header(name) != PROPRIETARY:
             continue
         folded[name] = folded.get(name, 0) + int(count)

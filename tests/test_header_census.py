@@ -128,6 +128,24 @@ def test_family_classification_and_order() -> None:
     assert fam.family_order[-1] == OTHER_FAMILY
 
 
+def test_proxy_cache_classifies_as_caching() -> None:
+    # Regression: routing must not shadow caching's specific x-proxy-cache.
+    fam = default_families()
+    assert fam.classify("x-proxy-cache") == "caching"
+    assert fam.classify("x-proxy-cache-hit") == "caching"
+
+
+def test_crawler_headers_excluded() -> None:
+    # x-crawler-* are CC-injected; the census must drop them even if a caller
+    # hands them in (the renderers claim they are excluded).
+    census = build_census(
+        {"x-crawler-detected-charset": 999, "x-acme-edge": 5}, {}, truncated=False
+    )
+    names = {e.name for e in census.top_headers}
+    assert "x-crawler-detected-charset" not in names
+    assert names == {"x-acme-edge"}
+
+
 def test_family_well_known() -> None:
     fam = default_families()
     assert fam.is_well_known("x-forwarded-proto") is True  # prefix
