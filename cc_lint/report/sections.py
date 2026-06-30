@@ -13,7 +13,7 @@ fixed page structure.
 import html
 import re
 import urllib.parse
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from cc_lint.cache_control import COUNT_FIELD as CC_COUNT_FIELD
 from cc_lint.cache_control import count_nonstandard as cc_count_nonstandard
@@ -586,8 +586,10 @@ def _render_note_card(  # pylint: disable=too-many-positional-arguments
                 '<span class="visually-hidden"> (HyperLogLog estimate of '
                 "distinct sites where this note fired)</span></span>"
             )
+    anchor = _note_anchor_id(note_id)
+    id_attr = f' id="{anchor}"' if anchor else ""
     return (
-        f'<details class="note severity-{severity}"{open_attr}>'
+        f'<details class="note severity-{severity}"{id_attr}{open_attr}>'
         f"<summary>"
         f'<span class="badge badge-{severity}">{severity.upper()}</span>'
         f'<span class="note-id">{html.escape(note_id)}</span>'
@@ -1314,6 +1316,51 @@ def render_asn_section(
     )
 
 
+# ---- Cross-reference links -------------------------------------------------
+# Some findings name the same thing in more than one place. Where the report
+# can point the reader at the fuller context for that thing -- without any
+# data-pipeline change, just a render-time join on a shared key -- we link the
+# two. Two anchor schemes exist:
+#
+# * ``hdr-<name>`` -- the canonical row of a non-standard header in the census
+#   top-headers table (``_header_anchor_id``);
+# * ``note-<id>``  -- a finding's full card in the Notes section
+#   (``_note_anchor_id``), the drill-down target for the Finding co-occurrence
+#   section.
+#
+# A link is emitted only when the target anchor is actually present ("if
+# available") and is distinguished by an underline only (class ``xref``),
+# never by colour, so it inherits any surrounding emphasis.
+
+
+def _header_anchor_id(name: str) -> str:
+    """Stable ``id`` for a per-header census row.
+
+    Header names are already lowercased upstream; fold anything outside
+    ``[a-z0-9-]`` to a hyphen so the id is HTML-safe. Returns ``""`` for a
+    name that slugs to nothing, in which case no anchor is emitted.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return f"hdr-{slug}" if slug else ""
+
+
+def _note_anchor_id(note_id: str) -> str:
+    """Stable ``id`` for a note's card in the Notes section."""
+    slug = re.sub(r"[^a-z0-9]+", "-", note_id.lower()).strip("-")
+    return f"note-{slug}" if slug else ""
+
+
+def _note_xref(note_id: str, anchored: Optional[Set[str]]) -> str:
+    """HTML-escape a note id, linking it to its Notes card when that note was
+    seen (and so carries an anchor). The link is underline-only (``xref``)."""
+    escaped = html.escape(note_id)
+    if anchored and note_id in anchored:
+        anchor = _note_anchor_id(note_id)
+        if anchor:
+            return f'<a class="xref" href="#{anchor}">{escaped}</a>'
+    return escaped
+
+
 def _census_members_html(members: List[HeaderEntry]) -> str:
     return ", ".join(f"<code>{html.escape(member.name)}</code>" for member in members)
 
@@ -1347,6 +1394,21 @@ def _census_axis_table(
         "<th>Responses</th><th>% of non-standard bytes</th>"
         "<th>Example members</th></tr></thead>"
         f"<tbody>{_census_cluster_rows(clusters, total_bytes)}</tbody></table>"
+    )
+
+
+def _census_top_header_row(entry: HeaderEntry) -> str:
+    # Anchor the canonical per-header row so cross-references elsewhere (e.g.
+    # synthetic Vary tokens) can drill in. See ``census_header_anchors``.
+    anchor = _header_anchor_id(entry.name)
+    id_attr = f' id="{anchor}"' if anchor else ""
+    return (
+        "<tr>"
+        f"<td><code{id_attr}>{html.escape(entry.name)}</code></td>"
+        f"<td>{html.escape(entry.vendor) if entry.vendor else '&mdash;'}</td>"
+        f"<td>{_format_count(entry.count)}</td>"
+        f"<td>{'de-facto' if entry.well_known else 'novel'}</td>"
+        "</tr>"
     )
 
 
@@ -1409,15 +1471,7 @@ def render_census_section(census: Census) -> str:
         ),
     ]
 
-    top_rows = "".join(
-        "<tr>"
-        f"<td><code>{html.escape(entry.name)}</code></td>"
-        f"<td>{html.escape(entry.vendor) if entry.vendor else '&mdash;'}</td>"
-        f"<td>{_format_count(entry.count)}</td>"
-        f"<td>{'de-facto' if entry.well_known else 'novel'}</td>"
-        "</tr>"
-        for entry in census.top_headers
-    )
+    top_rows = "".join(_census_top_header_row(entry) for entry in census.top_headers)
     parts.append(
         "<h3>Top non-standard headers</h3>"
         '<table class="data-table">'
@@ -1709,9 +1763,13 @@ def _cooccur_pct(count: int, denom: int) -> str:
     return f"{count / denom * 100:.2f}%" if denom else "—"
 
 
-def _bundle_label_html(bundle: str) -> str:
+def _bundle_label_html(bundle: str, link_tokens: Optional[Set[str]] = None) -> str:
     if bundle == EMPTY_BUNDLE_LABEL:
         return f"<em>{html.escape(bundle)}</em>"
+    if link_tokens is not None:
+        # A bundle is a ", "-joined recipe of tokens (note ids here); link the
+        # ones that have a card to drill into.
+        return ", ".join(_note_xref(tok, link_tokens) for tok in bundle.split(", "))
     return html.escape(bundle)
 
 
@@ -1720,6 +1778,7 @@ def _render_bundle_table(
     hlls: Dict[str, Any],
     denom: int,
     noun: str = "bundle",
+    link_tokens: Optional[Set[str]] = None,
 ) -> str:
     if not bundles:
         return '<p class="muted">No data.</p>'
@@ -1729,7 +1788,7 @@ def _render_bundle_table(
     for bundle, count in bundles[:25]:
         sites = _hll_sites(hlls, bundle)
         cells = [
-            _bundle_label_html(bundle),
+            _bundle_label_html(bundle, link_tokens),
             _format_count(count),
             _cooccur_pct(count, denom),
             f"~{_format_count(sites)}" if sites else "—",
@@ -1840,7 +1899,11 @@ def _render_marginal_prevalence(
     )
 
 
-def _render_lift_table(lifts: List[Dict[str, Any]], noun: str = "Header") -> str:
+def _render_lift_table(
+    lifts: List[Dict[str, Any]],
+    noun: str = "Header",
+    link_tokens: Optional[Set[str]] = None,
+) -> str:
     if not lifts:
         return '<p class="muted">No co-occurring pairs observed.</p>'
     head = [f"{noun} A", f"{noun} B", "Co-occurrences", "P(A|B)", "P(B|A)", "Lift"]
@@ -1848,8 +1911,8 @@ def _render_lift_table(lifts: List[Dict[str, Any]], noun: str = "Header") -> str
     rows: List[str] = []
     for row in lifts:
         cells = [
-            html.escape(str(row["a"])),
-            html.escape(str(row["b"])),
+            _note_xref(str(row["a"]), link_tokens),
+            _note_xref(str(row["b"]), link_tokens),
             _format_count(int(row["joint"])),
             f"{row['p_a_given_b'] * 100:.1f}%",
             f"{row['p_b_given_a'] * 100:.1f}%",
@@ -1957,8 +2020,15 @@ def render_cooccur_section(cooccur: Dict[str, Any], roles: Dict[str, str]) -> st
     )
 
 
-def render_note_cooccur_section(note_cooccur: Dict[str, Any]) -> str:
-    """Render the note (finding) co-occurrence section (issue #7)."""
+def render_note_cooccur_section(
+    note_cooccur: Dict[str, Any], note_anchors: Optional[Set[str]] = None
+) -> str:
+    """Render the note (finding) co-occurrence section (issue #7).
+
+    ``note_anchors`` is the set of note ids that have a card in the Notes
+    section; cluster members and lift pairs whose note is in that set link
+    back to the full finding.
+    """
     if not note_cooccur:
         return ""
     denom = int(note_cooccur.get("responses", 0))
@@ -1989,7 +2059,11 @@ def render_note_cooccur_section(note_cooccur: Dict[str, Any]) -> str:
         blocks.append(TRUNCATED_NOTE)
     blocks.append(
         _render_bundle_table(
-            ranked_bundles(note_cooccur), bundle_hlls, denom, noun="cluster"
+            ranked_bundles(note_cooccur),
+            bundle_hlls,
+            denom,
+            noun="cluster",
+            link_tokens=note_anchors,
         )
     )
     blocks.append(
@@ -2001,7 +2075,11 @@ def render_note_cooccur_section(note_cooccur: Dict[str, Any]) -> str:
         "clumping signal.</p>"
     )
     blocks.append(
-        _render_lift_table(conditional_lifts(note_cooccur, 25), noun="Finding")
+        _render_lift_table(
+            conditional_lifts(note_cooccur, 25),
+            noun="Finding",
+            link_tokens=note_anchors,
+        )
     )
 
     return (

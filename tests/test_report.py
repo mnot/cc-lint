@@ -586,6 +586,19 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Non-standard Vary tokens", md)
         self.assertIn("x-ab-bucket", md)
 
+    def test_census_anchors_top_headers(self) -> None:
+        # Each non-standard header in the census top-headers table carries a
+        # stable per-name anchor that other sections can drill into.
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "unprocessed_counts": {"x-ab-bucket": 42, "cf-ray": 30},
+            "field_bytes": {"x-ab-bucket": 500},
+        }
+        html = self._render(data)
+        self.assertIn('id="hdr-x-ab-bucket"', html)
+        self.assertIn('id="hdr-cf-ray"', html)
+
     def test_no_vary_section_absent(self) -> None:
         html = self._render({"total_responses": 5, "notes": {}})
         self.assertNotIn('id="vary"', html)
@@ -727,6 +740,33 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Conditional lifts", html)
         self.assertIn("Finding A", html)
         self.assertIn("CC_CONFLICTING", md)
+
+    def test_note_cooccur_links_to_findings_when_seen(self) -> None:
+        # A note in a co-occurrence cluster/pair links back to its card in
+        # the Notes section when that note fired (so the card exists); a note
+        # that did not fire is left as plain text ("if available").
+        cluster = "CC_CONFLICTING, FIELD_DEPRECATED"
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {"CC_CONFLICTING": {"count": 50, "vars": {}}},
+            "note_cooccur": {
+                "responses": 100,
+                "bundles": {"occ": {cluster: 40, "(none)": 50}, "hlls": {}},
+                "marginals": {
+                    "occ": {"CC_CONFLICTING": 50, "FIELD_DEPRECATED": 40},
+                    "hlls": {},
+                },
+                "pairs": {"occ": {cluster: 40}, "hlls": {}},
+            },
+        }
+        html = self._render(data)
+        # The fired note's card carries an anchor the section links to.
+        self.assertIn('id="note-cc-conflicting"', html)
+        self.assertIn(
+            '<a class="xref" href="#note-cc-conflicting">CC_CONFLICTING</a>', html
+        )
+        # FIELD_DEPRECATED never fired -> no card, so it is not linked.
+        self.assertNotIn('href="#note-field-deprecated"', html)
 
     def test_no_note_cooccur_section_absent(self) -> None:
         html = self._render({"total_responses": 5, "notes": {}})

@@ -81,6 +81,10 @@ STYLE = """
   }
   a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  /* Intra-report cross-references (e.g. a non-standard Vary token to its
+     census row) are marked by an underline only, never colour, so they
+     inherit any surrounding emphasis instead of reading as external links. */
+  a.xref { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   h1, h2, h3, h4 { line-height: 1.25; margin: 0 0 .5rem; }
   h1 { font-size: 1.75rem; }
   h2 { font-size: 1.25rem; margin-top: 2rem; border-bottom: 1px solid var(--card-border); padding-bottom: .25rem; }

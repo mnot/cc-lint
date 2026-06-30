@@ -143,7 +143,7 @@ def _build_html(data: Dict[str, Any]) -> str:
         render_vary_section(vary),
         render_cache_control_section(cache_control),
         render_cooccur_section(cooccur, layer_roles),
-        render_note_cooccur_section(note_cooccur),
+        render_note_cooccur_section(note_cooccur, seen_note_ids),
         render_transition_section(transition),
         render_census_section(census),
         render_missing_section(
