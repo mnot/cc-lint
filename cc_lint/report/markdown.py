@@ -173,7 +173,11 @@ def _fmt_byte_size_md(byte_size: int) -> str:
         return f"{byte_size} B"
     if byte_size < 1024 * 1024:
         return f"{byte_size / 1024:.1f} KB"
-    return f"{byte_size / (1024 * 1024):.1f} MB"
+    if byte_size < 1024 ** 3:
+        return f"{byte_size / (1024 * 1024):.1f} MB"
+    if byte_size < 1024 ** 4:
+        return f"{byte_size / 1024 ** 3:.1f} GB"
+    return f"{byte_size / 1024 ** 4:.1f} TB"
 
 
 def _render_value_samples(
