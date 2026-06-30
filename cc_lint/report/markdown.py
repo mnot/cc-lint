@@ -912,14 +912,17 @@ def _render_infrastructure(
             lines.append("### Headers by infrastructure")
             lines.append("")
             lines.append(
-                "Share of each header's occurrences seen on each layer "
-                "(layers overlap)."
+                "How each header's occurrences split across fingerprint layers: "
+                "each percentage is the layer's share of *this header's* total "
+                "occurrences, **not** the fraction of that layer's responses "
+                "carrying the header. A near-universal header therefore roughly "
+                "mirrors each platform's overall traffic share. Layers overlap."
             )
             lines.append("")
             if truncated:
                 lines.append("_Long tail elided during shuffle; head only._")
                 lines.append("")
-            lines.append("| Header | Layers (share of occurrences) |")
+            lines.append("| Header | Layers (share of this header's occurrences) |")
             lines.append("| --- | --- |")
             lines.extend(body)
             lines.append("")

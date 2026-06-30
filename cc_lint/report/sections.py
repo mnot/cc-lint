@@ -1121,12 +1121,17 @@ def _render_field_by_layer(
         return ""
     return (
         "<h3>Headers by infrastructure</h3>"
-        '<p class="muted">For the highest-volume response headers, the share '
-        "of each header's occurrences seen on each fingerprint layer. Layers "
-        "overlap, so shares need not sum to 100%.</p>"
+        '<p class="muted">For the highest-volume response headers, how that '
+        "header's occurrences are split across fingerprint layers: each "
+        "percentage is the layer's share of <em>this header's</em> total "
+        "occurrences, <strong>not</strong> the fraction of that layer's "
+        "responses carrying the header. So a near-universal header roughly "
+        "mirrors each platform's overall traffic share. Layers overlap, so "
+        "shares need not sum to 100%.</p>"
         f"{TRUNCATED_NOTE if truncated else ''}"
         '<table class="data-table">'
-        "<thead><tr><th>Header</th><th>Layers (share of occurrences)</th></tr></thead>"
+        "<thead><tr><th>Header</th>"
+        "<th>Layers (share of this header's occurrences)</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
 
