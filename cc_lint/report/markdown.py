@@ -288,12 +288,13 @@ def _render_field_error_block(var_name: str, counts: Dict[str, int]) -> List[str
     return lines
 
 
-def _render_note_block(
+def _render_note_block(  # pylint: disable=too-many-positional-arguments
     note_id: str,
     note_data: Dict[str, Any],
     severity: str,
     field_counts: Dict[str, int],
     distinct_sites_estimate: Optional[int] = None,
+    layer_counts: Optional[Dict[str, int]] = None,
 ) -> List[str]:
     count = int(note_data.get("count", 0))
 
@@ -350,11 +351,22 @@ def _render_note_block(
     by_layer = note_data.get("by_layer") or {}
     if by_layer:
         ordered = sorted(by_layer.items(), key=lambda kv: kv[1], reverse=True)[:10]
+        show_rate = bool(layer_counts)
         bits = []
         for layer, fired in ordered:
             layer_share = f"{fired / count * 100:.0f}%" if count else "—"
-            bits.append(f"{layer} ({_fmt_count(fired)}, {layer_share})")
-        lines.append("By infrastructure: " + ", ".join(bits))
+            cells = [_fmt_count(fired), layer_share]
+            if show_rate:
+                layer_total = (layer_counts or {}).get(layer, 0)
+                cells.append(f"{fired / layer_total * 100:.1f}%" if layer_total else "—")
+            bits.append(f"{layer} ({', '.join(cells)})")
+        # Legend in the prefix so the per-layer tuple stays unambiguous.
+        legend = (
+            "fires, % of this note, % of layer's traffic"
+            if show_rate
+            else "fires, % of this note"
+        )
+        lines.append(f"By infrastructure ({legend}): " + ", ".join(bits))
         lines.append("")
     return lines
 
@@ -463,6 +475,7 @@ def _render_notes_section(  # pylint: disable=too-many-positional-arguments
     category_order: List[str],
     total_notes: int = 0,
     distinct_sites_estimate: Optional[int] = None,
+    layer_counts: Optional[Dict[str, int]] = None,
 ) -> List[str]:
     if not notes:
         return []
@@ -507,7 +520,12 @@ def _render_notes_section(  # pylint: disable=too-many-positional-arguments
         for note_id, data, severity in entries:
             lines.extend(
                 _render_note_block(
-                    note_id, data, severity, field_counts, distinct_sites_estimate
+                    note_id,
+                    data,
+                    severity,
+                    field_counts,
+                    distinct_sites_estimate,
+                    layer_counts,
                 )
             )
     return lines
@@ -1631,6 +1649,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
             category_order,
             total_notes,
             distinct_sites_estimate,
+            data.get("layer_counts") or {},
         )
     )
     lines.extend(

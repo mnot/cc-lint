@@ -408,44 +408,69 @@ def _render_variable_stats(
     return f'<div class="var-stats">{"".join(blocks)}</div>'
 
 
-def _render_note_layers(by_layer: Dict[str, int], note_count: int) -> str:
+def _render_note_layers(
+    by_layer: Dict[str, int],
+    note_count: int,
+    layer_counts: Optional[Dict[str, int]] = None,
+) -> str:
     """Compact per-note infrastructure breakdown (issue #4).
 
-    Shows the share of this note's occurrences seen on each fingerprint
-    layer. Layers overlap (a response can be cloudflare + nginx + nextjs),
-    so the shares need not sum to 100%.
+    Shows, per fingerprint layer, the share of this note's occurrences seen
+    on that layer (``Share of occurrences``) and -- when per-layer response
+    totals are available -- the share of *that layer's own traffic* that saw
+    the note (``Of layer's traffic``). Layers overlap (a response can be
+    cloudflare + nginx + nextjs), so the occurrence shares need not sum to
+    100%. ``Of layer's traffic`` divides note occurrences by the layer's
+    response count, so it can exceed 100% for notes that fire more than once
+    per response (per-directive / per-header notes).
     """
     if not by_layer:
         return ""
     ordered = sorted(by_layer.items(), key=lambda kv: kv[1], reverse=True)
+    show_rate = bool(layer_counts)
     rows: List[str] = []
     for layer, fired in ordered[:10]:
         share = f"{fired / note_count * 100:.1f}%" if note_count else "—"
+        rate_cell = ""
+        if show_rate:
+            layer_total = (layer_counts or {}).get(layer, 0)
+            rate = f"{fired / layer_total * 100:.1f}%" if layer_total else "—"
+            rate_cell = f"<td>{rate}</td>"
         rows.append(
             f"<tr><td>{html.escape(layer)}</td>"
-            f"<td>{_format_count(fired)}</td><td>{share}</td></tr>"
+            f"<td>{_format_count(fired)}</td><td>{share}</td>{rate_cell}</tr>"
         )
     if len(ordered) > 10:
+        colspan = 4 if show_rate else 3
         rows.append(
-            f'<tr><td colspan="3" class="muted">… {len(ordered) - 10} more '
-            "layers not shown …</td></tr>"
+            f'<tr><td colspan="{colspan}" class="muted">… {len(ordered) - 10} '
+            "more layers not shown …</td></tr>"
         )
+    rate_header = (
+        '<th title="This note&#39;s occurrences on the layer divided by the '
+        "layer's own response count -- the share of the platform's traffic "
+        'that saw the note. Can exceed 100% for notes that fire more than '
+        'once per response.">Of layer\'s traffic</th>'
+        if show_rate
+        else ""
+    )
     return (
         '<div class="note-layers"><h4 title="Layers overlap; a response can '
         'match several, so shares need not sum to 100%.">By infrastructure</h4>'
         '<table class="var-table">'
         "<thead><tr><th>Layer</th><th>Note fires</th>"
-        "<th>Share of occurrences</th></tr></thead>"
+        f"<th>Share of occurrences</th>{rate_header}</tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table></div>"
     )
 
 
-def _render_note_card(
+def _render_note_card(  # pylint: disable=too-many-positional-arguments
     note_id: str,
     note_data: Dict[str, Any],
     severity: str,
     field_counts: Dict[str, int],
     distinct_sites_estimate: Optional[int] = None,
+    layer_counts: Optional[Dict[str, int]] = None,
 ) -> str:
     count = int(note_data.get("count", 0))
     samples = note_data.get("samples") or []
@@ -466,7 +491,9 @@ def _render_note_card(
         )
 
     var_html = _render_variable_stats(note_data, field_counts)
-    layers_html = _render_note_layers(note_data.get("by_layer") or {}, count)
+    layers_html = _render_note_layers(
+        note_data.get("by_layer") or {}, count, layer_counts
+    )
 
     open_attr = " open" if count > 0 else ""
     count_title = (
@@ -532,6 +559,7 @@ def render_notes_section(  # pylint: disable=too-many-positional-arguments
     category_order: List[str],
     total_notes: int = 0,
     distinct_sites_estimate: Optional[int] = None,
+    layer_counts: Optional[Dict[str, int]] = None,
 ) -> str:
     """Render notes grouped by httplint category.
 
@@ -571,6 +599,7 @@ def render_notes_section(  # pylint: disable=too-many-positional-arguments
                 severity_index.get(note_id, "warn"),
                 field_counts,
                 distinct_sites_estimate,
+                layer_counts,
             )
             for note_id, data in entries
         ]

@@ -110,6 +110,7 @@ def _build_html(data: Dict[str, Any]) -> str:
             category_order,
             total_notes,
             distinct_sites_estimate,
+            layer_counts,
         ),
         render_field_counts_section(
             field_counts, total_responses, bool(data.get("truncated_field_counts"))

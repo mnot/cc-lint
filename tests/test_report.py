@@ -104,8 +104,13 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Fingerprinted 85.0% of responses", html)
         self.assertIn("cloudflare", html)
         self.assertIn("Headers by infrastructure", html)
-        # Per-note breakdown rendered on the note card.
+        # Per-note breakdown rendered on the note card, including the
+        # "of layer's traffic" rate: cloudflare fired 20× over its 60
+        # responses = 33.3%, nginx 10× over 25 = 40.0%.
         self.assertIn("By infrastructure", html)
+        self.assertIn("Of layer's traffic", html)
+        self.assertIn("<td>33.3%</td>", html)
+        self.assertIn("<td>40.0%</td>", html)
         # Top-ASN section: AS number, operator label (issue #28), header.
         self.assertIn('id="asn"', html)
         self.assertIn("AS13335", html)
@@ -115,7 +120,9 @@ class TestRenderer(unittest.TestCase):
         # Markdown parity.
         self.assertIn("## Infrastructure", md)
         self.assertIn("matched no known layer", md)
-        self.assertIn("By infrastructure:", md)
+        self.assertIn("By infrastructure (fires, % of this note, ", md)
+        self.assertIn("cloudflare (20, 67%, 33.3%)", md)
+        self.assertIn("nginx (10, 33%, 40.0%)", md)
         self.assertIn("## Top networks (ASN)", md)
         self.assertIn("AS13335", md)
         self.assertIn("| Operator |", md)
