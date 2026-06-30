@@ -216,8 +216,10 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("require-corp; foo", html)
         # The via sample (no captured value) still renders its URL.
         self.assertIn("http://via.example/", html)
-        # Markdown carries the same per-field samples (LLM-facing parity).
+        # Markdown carries the same per-field samples (LLM-facing parity),
+        # including the per-value sample count HTML shows as "Samples (N)".
         self.assertIn("Samples by value:", md)
+        self.assertIn("Samples (1)", md)
         self.assertIn("http://coep.example/", md)
         self.assertIn("require-corp; foo", md)
         self.assertIn("http://via.example/", md)

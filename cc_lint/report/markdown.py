@@ -188,7 +188,7 @@ def _render_value_samples(
         urls = [s for s in samples if s.get("url")]
         if not urls:
             continue
-        blocks.append(f"- {_md_inline_code(val)}")
+        blocks.append(f"- {_md_inline_code(val)} — Samples ({_fmt_count(len(urls))})")
         for sample in urls:
             captured = sample.get("vars", {}).get("field_values")
             suffix = f" — {_md_inline_code(captured)}" if captured else ""
