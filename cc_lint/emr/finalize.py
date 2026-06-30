@@ -42,6 +42,7 @@ from cc_lint.emr.job import (
     COOCCUR_KEY,
     CSP_SIZES_KEY,
     GLOBALS_KEY,
+    NOTE_COOCCUR_KEY,
     NOTE_KEY_PREFIX,
     TRANSITION_KEY,
     VALUE_HISTOGRAMS_KEY,
@@ -103,6 +104,8 @@ def merge_results(results_dir: str) -> Dict[str, Any]:
             merge_value_histograms(merged.setdefault("value_histograms", {}), value)
         elif key == COOCCUR_KEY:
             merge_cooccur(merged.setdefault("cooccur", {}), value)
+        elif key == NOTE_COOCCUR_KEY:
+            merge_cooccur(merged.setdefault("note_cooccur", {}), value)
         elif key == TRANSITION_KEY:
             merge_transition(merged.setdefault("transition", {}), value)
         else:

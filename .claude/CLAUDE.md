@@ -32,15 +32,15 @@ breaking any of them turns an 11-hour run into a memory disaster:
   `vars[var_name]` dict; `TOP_K_FIELD_COUNTS=5000` for field/unprocessed
   counts (and for the per-header `field_bytes` byte-economics dict, #10);
   `TOP_K_CSP_SITES=100000` for the per-site CSP-size dict; `TOP_K_RECIPES=2000`
-  per Vary *and* Cache-Control recipe/marginal dict (reused for the
-  co-occurrence bundle/marginal/pair dicts too); `TOP_K_ASN=5000` for the
+  per Vary *and* Cache-Control recipe/marginal dict (reused for the header
+  *and* note co-occurrence bundle/marginal/pair dicts too); `TOP_K_ASN=5000` for the
   per-ASN count dict (`truncated_asn_counts` flag). Adding a new tracked dict
   means adding a trim path and a `truncated_*` flag.
 - **Sharded reducer keys** (`cc_lint.emr.job`): the mapper does NOT emit a
   single "stats" record. It emits `GLOBALS_KEY`, `NOTE_KEY_PREFIX:<note_id>`
   per note, `CSP_SIZES_KEY`, `VARY_KEY`, `CACHE_CONTROL_KEY`, `COOCCUR_KEY`,
-  and `TRANSITION_KEY`. Adding a new top-level aggregation usually means a new
-  shard key; do not stuff it into globals.
+  `NOTE_COOCCUR_KEY`, and `TRANSITION_KEY`. Adding a new top-level aggregation
+  usually means a new shard key; do not stuff it into globals.
 - **Bounded dicts skip the trim path**. The transition-tax block
   (`cc_lint.transition`, `TRANSITION_KEY`) is the exception to the "new dict
   = new trim path + `truncated_*` flag" rule: its key space is
@@ -67,16 +67,18 @@ breaking any of them turns an 11-hour run into a memory disaster:
 
 ## Merge contract (don't drop fields)
 
-`StatsCollector.to_dict()` produces up to 18 fields; five are conditional —
+`StatsCollector.to_dict()` produces up to 19 fields; five are conditional —
 `vary` is emitted only when a response carried a `Vary` header,
 `cache_control` only when one carried a `Cache-Control` header, and
 `value_histograms` only when a tracked numeric header was seen — while
-`cooccur` (the security-header co-occurrence block) and `transition` (the
+`cooccur` (the security-header co-occurrence block), `note_cooccur` (the
+finding/note co-occurrence block, issue #7), and `transition` (the
 legacy/modern dual-emit / transition-tax block, issue #11) are emitted
 whenever there were any responses. `merge_stats_dict()` in `cc_lint/emr/job.py`
 must merge **every** field (`merge_cooccur` covers the bundle/marginal/pair
-dicts and the per-bundle `by_layer` infra breakdown; `merge_transition` covers
-the per-pair, per-category occurrence + site-HLL dicts; `merge_cache_control`
+dicts and the per-bundle `by_layer` infra breakdown — and is reused for
+`note_cooccur`, which carries the same shape minus `by_layer`; `merge_transition`
+covers the per-pair, per-category occurrence + site-HLL dicts; `merge_cache_control`
 and `merge_vary` cover their recipe/marginal dicts; `_merge_header_bytes`
 covers the #10 byte-economics trio — `field_bytes`, `header_block_hist`, and
 the `total_header_bytes` scalar — which ride the `globals` shard), and
@@ -169,6 +171,8 @@ cc_lint/
   stats.py             # StatsCollector; VARS_TO_TRACK; get_note_value
   histograms.py        # bucket scales for numeric note vars
   hll.py               # HyperLogLog
+  cooccur.py           # security-header co-occurrence + generic block machinery (#6)
+  note_cooccur.py      # note/finding co-occurrence: severity gate + lineage exclusion (#7)
   transition.py        # legacy/modern dual-emit pairs (transition tax, #11)
   top_sites.py         # Tranco filter + site normalisation
   report/

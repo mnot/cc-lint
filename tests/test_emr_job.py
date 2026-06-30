@@ -146,6 +146,12 @@ class TestMergeStatsDict(unittest.TestCase):
                     "pairs": {"occ": {}},
                     "by_layer": {"x-frame-options": {"cloudflare": 10}},
                 },
+                "note_cooccur": {
+                    "responses": 50,
+                    "bundles": {"occ": {"(none)": 45, "BAD_SYNTAX": 5}},
+                    "marginals": {"occ": {"BAD_SYNTAX": 5}},
+                    "pairs": {"occ": {"BAD_SYNTAX, CC_CONFLICTING": 3}},
+                },
                 "transition": {
                     "responses": 50,
                     "pairs": {
@@ -199,6 +205,12 @@ class TestMergeStatsDict(unittest.TestCase):
                     "marginals": {"occ": {"x-frame-options": 10}},
                     "pairs": {"occ": {}},
                     "by_layer": {"x-frame-options": {"cloudflare": 5, "nginx": 5}},
+                },
+                "note_cooccur": {
+                    "responses": 30,
+                    "bundles": {"occ": {"(none)": 25, "BAD_SYNTAX": 5}},
+                    "marginals": {"occ": {"BAD_SYNTAX": 5}},
+                    "pairs": {"occ": {"BAD_SYNTAX, CC_CONFLICTING": 2}},
                 },
                 "transition": {
                     "responses": 30,
@@ -280,6 +292,20 @@ class TestMergeStatsDict(unittest.TestCase):
         self.assertEqual(
             target["cooccur"]["by_layer"]["x-frame-options"],
             {"cloudflare": 15, "nginx": 5},
+        )
+        # note_cooccur block (issue #7) survives: responses sum, and the
+        # bundle / marginal / pair occurrence counts merge across both folds.
+        self.assertEqual(target["note_cooccur"]["responses"], 80)
+        self.assertEqual(
+            target["note_cooccur"]["bundles"]["occ"],
+            {"(none)": 70, "BAD_SYNTAX": 10},
+        )
+        self.assertEqual(
+            target["note_cooccur"]["marginals"]["occ"], {"BAD_SYNTAX": 10}
+        )
+        self.assertEqual(
+            target["note_cooccur"]["pairs"]["occ"],
+            {"BAD_SYNTAX, CC_CONFLICTING": 5},
         )
         # transition block (issue #11) survives: responses sum and per-pair,
         # per-category occurrence counts merge across both folds.

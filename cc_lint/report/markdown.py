@@ -1269,6 +1269,78 @@ def _render_cooccur_section(cooccur: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _render_note_cooccur_section(note_cooccur: Dict[str, Any]) -> List[str]:
+    if not note_cooccur:
+        return []
+    denom = int(note_cooccur.get("responses", 0))
+    if denom <= 0:
+        return []
+    bundle_hlls: Dict[str, Any] = (note_cooccur.get("bundles") or {}).get("hlls", {})
+    none_count = empty_bundle_count(note_cooccur)
+
+    lines = [
+        "## Finding co-occurrence",
+        "",
+        "Which findings clump on the same response — testing whether defects "
+        "cluster rather than scatter. A *cluster* is the set of defect notes "
+        f"(`bad` / `warn`) that fired on a response; `{EMPTY_BUNDLE_LABEL}` "
+        "means none did. Mechanical parent/child note pairs (a sub-finding and "
+        "its parent always co-occur) are excluded from the pairs below. "
+        "*Responses* is occurrence-weighted; *Sites* is a HyperLogLog estimate "
+        f"of distinct operators. Shares are of all {_fmt_count(denom)} "
+        "responses.",
+        "",
+        f"**{_cooccur_pct(none_count, denom)}** of responses "
+        f"({_fmt_count(none_count)}) produced **no** `bad`/`warn` finding.",
+        "",
+        "### Top finding clusters",
+        "",
+    ]
+    if note_cooccur.get("bundles_truncated"):
+        lines.append("_Long tail elided during shuffle; head only._")
+        lines.append("")
+    lines.append("| Cluster | Responses | % of responses | Sites |")
+    lines.append("| --- | --- | --- | --- |")
+    bundles = ranked_bundles(note_cooccur)
+    for bundle, count in bundles[:25]:
+        lines.append(
+            f"| {_bundle_label_md(bundle)} | {_fmt_count(count)} | "
+            f"{_cooccur_pct(count, denom)} | {_cooccur_sites(bundle_hlls, bundle)} |"
+        )
+    if len(bundles) > 25:
+        lines.append(f"_… {len(bundles) - 25} more clusters not shown …_")
+    lines.append("")
+
+    lines.append("### Conditional lifts")
+    lines.append("")
+    lines.append(
+        "For the most common co-occurring finding pairs: `P(A|B)` is the share "
+        "of responses with finding B that also carry A. **Lift** > 1 means the "
+        "two fire together more than independent prevalence predicts — the "
+        "clumping signal."
+    )
+    lines.append("")
+    lifts = conditional_lifts(note_cooccur, 25)
+    if lifts:
+        lines.append(
+            "| Finding A | Finding B | Co-occurrences | P(A|B) | P(B|A) | Lift |"
+        )
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for row in lifts:
+            lift = f"{row['lift']:.1f}×" if row["lift"] else "—"
+            lines.append(
+                f"| {_md_escape_pipe(str(row['a']))} | "
+                f"{_md_escape_pipe(str(row['b']))} | "
+                f"{_fmt_count(int(row['joint']))} | "
+                f"{row['p_a_given_b'] * 100:.1f}% | "
+                f"{row['p_b_given_a'] * 100:.1f}% | {lift} |"
+            )
+    else:
+        lines.append("_No co-occurring finding pairs observed._")
+    lines.append("")
+    return lines
+
+
 def _transition_pct(count: int, denom: int) -> str:
     return f"{count / denom * 100:.2f}%" if denom else "—"
 
@@ -1482,6 +1554,7 @@ def render_markdown(data: Dict[str, Any]) -> str:
     lines.extend(_render_vary_section(data.get("vary") or {}))
     lines.extend(_render_cache_control_section(data.get("cache_control") or {}))
     lines.extend(_render_cooccur_section(data.get("cooccur") or {}))
+    lines.extend(_render_note_cooccur_section(data.get("note_cooccur") or {}))
     lines.extend(_render_transition_section(data.get("transition") or {}))
     lines.extend(
         _render_unprocessed(

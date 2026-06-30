@@ -604,6 +604,41 @@ class TestRenderer(unittest.TestCase):
         html = self._render({"total_responses": 5, "notes": {}})
         self.assertNotIn('id="cooccur"', html)
 
+    def test_note_cooccur_section_rendered(self) -> None:
+        cluster = "CC_CONFLICTING, FIELD_DEPRECATED"
+        data: Dict[str, Any] = {
+            "total_responses": 100,
+            "notes": {},
+            "note_cooccur": {
+                "responses": 100,
+                "bundles": {
+                    "occ": {cluster: 40, "(none)": 50, "CC_CONFLICTING": 10},
+                    "hlls": {},
+                },
+                "marginals": {
+                    "occ": {"CC_CONFLICTING": 50, "FIELD_DEPRECATED": 40},
+                    "hlls": {},
+                },
+                "pairs": {"occ": {cluster: 40}, "hlls": {}},
+            },
+        }
+        html, md = self._render_both(data)
+        self.assertIn('id="note-cooccur"', html)
+        self.assertIn("Finding co-occurrence", html)
+        self.assertIn("## Finding co-occurrence", md)
+        # The no-defect headline and the finding-clusters view appear.
+        self.assertIn("no</strong> <code>bad</code>", html)
+        self.assertIn("Top finding clusters", html)
+        self.assertIn("Top finding clusters", md)
+        # The conditional-lift table surfaces the co-occurring pair in both.
+        self.assertIn("Conditional lifts", html)
+        self.assertIn("Finding A", html)
+        self.assertIn("CC_CONFLICTING", md)
+
+    def test_no_note_cooccur_section_absent(self) -> None:
+        html = self._render({"total_responses": 5, "notes": {}})
+        self.assertNotIn('id="note-cooccur"', html)
+
     def test_url_escaping(self) -> None:
         bad = {
             "total_responses": 1,
