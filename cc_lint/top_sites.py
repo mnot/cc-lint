@@ -65,11 +65,13 @@ def load_top_sites(path: str, limit: int) -> Set[str]:
 def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
     """Normalize a URL or hostname to a comparable site key.
 
-    Lowercases, strips a leading "www." label, and returns just the host
-    portion. Returns None for empty/None input or any parse failure.
+    Lowercases, strips a leading "www." label, punycode-encodes
+    internationalized (non-ASCII) hosts, and returns just the host portion.
+    Returns None for empty/None input or any parse failure.
 
-    The result is the same shape as entries in the Tranco list (host form),
-    so it can be compared against top-sites sets directly.
+    The result is the same shape as entries in the Tranco list (host form,
+    IDN hosts in punycode), so it can be compared against top-sites sets
+    directly.
     """
     if not url_or_host:
         return None
@@ -83,6 +85,16 @@ def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
         host = host.lower()
         if host.startswith("www."):
             host = host[4:]
+        if not host.isascii():
+            # Tranco lists IDN hosts in punycode (xn--…). Encode so they
+            # match the top-sites set and don't split into a second HLL site
+            # key from their Unicode form. UnicodeError (a ValueError) on a
+            # malformed IDN label would be caught below and drop the site;
+            # catch it here so we keep the Unicode host instead.
+            try:
+                host = host.encode("idna").decode("ascii")
+            except UnicodeError:
+                pass
         return host
     except (ValueError, AttributeError, TypeError):
         # urlparse raises ValueError on malformed IPv6; AttributeError /
