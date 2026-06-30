@@ -102,7 +102,7 @@ def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
         return None
 
 
-def is_in_top_sites(url_or_host: str, top_sites: Set[str]) -> bool:
+def is_in_top_sites(url_or_host: Optional[str], top_sites: Set[str]) -> bool:
     """Check if a URL's host (or the host string itself) is in ``top_sites``."""
     site = normalize_site(url_or_host)
     return site is not None and site in top_sites
