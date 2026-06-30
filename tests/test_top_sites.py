@@ -63,6 +63,11 @@ class TestNormalizeSite(unittest.TestCase):
     def test_idn_hostname_only(self) -> None:
         self.assertEqual(normalize_site("例え.テスト"), "xn--r8jz45g.xn--zckzah")
 
+    def test_idn2008_sharp_s_not_mapped_to_ss(self) -> None:
+        # IDNA2008/UTS-46 (what registries and Tranco use) keeps ß; the stdlib
+        # IDNA2003 codec would wrongly map faß.de -> fass.de and miss Tranco.
+        self.assertEqual(normalize_site("https://faß.de/"), "xn--fa-hia.de")
+
     def test_already_punycode_unchanged(self) -> None:
         self.assertEqual(
             normalize_site("xn--bcher-kva.example"), "xn--bcher-kva.example"

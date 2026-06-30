@@ -4,6 +4,7 @@ import zipfile
 from typing import Optional, Set
 from urllib.parse import urlparse
 
+import idna
 import requests
 
 TRANCO_URL = "https://tranco-list.eu/top-1m.csv.zip"
@@ -86,13 +87,17 @@ def normalize_site(url_or_host: Optional[str]) -> Optional[str]:
         if host.startswith("www."):
             host = host[4:]
         if not host.isascii():
-            # Tranco lists IDN hosts in punycode (xn--…). Encode so they
-            # match the top-sites set and don't split into a second HLL site
-            # key from their Unicode form. UnicodeError (a ValueError) on a
-            # malformed IDN label would be caught below and drop the site;
-            # catch it here so we keep the Unicode host instead.
+            # Tranco lists IDN hosts in punycode (xn--…). Encode so they match
+            # the top-sites set and don't split into a second HLL site key from
+            # their Unicode form. Use the idna package (IDNA2008/UTS-46), not
+            # the stdlib "idna" codec (IDNA2003): registries — and therefore
+            # Tranco's xn-- labels — follow IDNA2008, and the two disagree on a
+            # residual set (e.g. ß — IDNA2003 maps faß.de to fass.de, IDNA2008
+            # keeps it as xn--fa-hia.de). idna.IDNAError subclasses UnicodeError,
+            # so a malformed label is caught here and we keep the Unicode host
+            # rather than letting the outer handler drop the site.
             try:
-                host = host.encode("idna").decode("ascii")
+                host = idna.encode(host, uts46=True).decode("ascii")
             except UnicodeError:
                 pass
         return host

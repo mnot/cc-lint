@@ -19,6 +19,7 @@ dependencies = [
     "boto3",
     "click",
     "requests",
+    "idna",
     "python-dateutil",
     "tomli; python_version < '3.11'",
     "typing_extensions; python_version < '3.11'"
