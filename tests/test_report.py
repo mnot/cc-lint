@@ -8,6 +8,11 @@ from typing import Any, Dict
 from cc_lint.hll import HLL_P_GLOBAL, HLL_P_PER_NOTE, hll_add, make_registers
 from cc_lint.report import render_report
 from cc_lint.report.markdown import _md_inline_code
+from cc_lint.report.severity import (
+    build_severity_index,
+    classify_unseen,
+    possible_note_ids,
+)
 
 SAMPLE_STATS = {
     "total_responses": 1234,
@@ -138,10 +143,17 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Reachable but not triggered", html)
         self.assertIn("Body-only", html)
         self.assertIn("Request-only", html)
-        # Specific request-only and body-only notes should not appear in the
-        # reachable bucket -- they should be classified into their own buckets.
-        self.assertIn("MISSING_USER_AGENT", html)
-        self.assertIn("BAD_GZIP", html)
+        # A representative request-only and body-only note should be routed to
+        # its own bucket and surface in the rendered page. Derive the names
+        # from the installed httplint wheel rather than pinning literals, so an
+        # upstream rename doesn't break this test (CLAUDE.md httplint-pin note).
+        possible = possible_note_ids(build_severity_index())
+        seen = set(SAMPLE_STATS.get("notes", {}).keys())
+        _reachable, request_only, body_only = classify_unseen(possible, seen)
+        self.assertTrue(request_only, "no request-only note in installed httplint")
+        self.assertTrue(body_only, "no body-only note in installed httplint")
+        self.assertIn(request_only[0], html)
+        self.assertIn(body_only[0], html)
 
     def test_truncation_flags_show(self) -> None:
         data = {
