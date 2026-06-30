@@ -481,7 +481,9 @@ def _render_note_card(
                 f'<span class="note-sites" title="HyperLogLog estimate of '
                 "distinct sites where this note fired, as a share of "
                 'all distinct sites analyzed.">'
-                f"~{_format_count(site_est)} sites{pct}</span>"
+                f"~{_format_count(site_est)} sites{pct}"
+                '<span class="visually-hidden"> (HyperLogLog estimate of '
+                "distinct sites where this note fired)</span></span>"
             )
     return (
         f'<details class="note severity-{severity}"{open_attr}>'
@@ -614,6 +616,7 @@ def render_health_summary(severity_counts: Dict[str, int]) -> str:
         return ""
     rows = []
     bar_segments = []
+    bar_label_parts = []
     for severity, label in (
         ("bad", "BAD"),
         ("warn", "WARN"),
@@ -637,6 +640,8 @@ def render_health_summary(severity_counts: Dict[str, int]) -> str:
             f'style="width:{pct:.3f}%" title="{html.escape(label)}: '
             f'{pct:.1f}%"></span>'
         )
+        bar_label_parts.append(f"{label} {pct:.1f}%")
+    bar_label = html.escape("Response severity mix: " + ", ".join(bar_label_parts))
     return (
         '<section id="health">'
         "<h2>Response health</h2>"
@@ -644,7 +649,8 @@ def render_health_summary(severity_counts: Dict[str, int]) -> str:
         "httplint finding it produced. <em>Clean</em> means httplint found "
         "nothing worth reporting on that response. Per-response, not "
         "per-site &mdash; popular sites contribute more responses.</p>"
-        f'<div class="health-bar">{"".join(bar_segments)}</div>'
+        f'<div class="health-bar" role="img" aria-label="{bar_label}">'
+        f'{"".join(bar_segments)}</div>'
         '<table class="data-table">'
         "<thead><tr><th>Severity</th><th>Responses</th><th>%</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"

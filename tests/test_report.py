@@ -234,7 +234,12 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("Distinct sites analyzed", html)
         self.assertIn("HLL estimate", html)
         self.assertIn("note-sites", html)
-        self.assertIn("sites (40.0%)</span>", html)
+        self.assertIn("sites (40.0%)", html)
+        self.assertIn(
+            'class="visually-hidden"> (HyperLogLog estimate of '
+            "distinct sites where this note fired)</span>",
+            html,
+        )
 
     def test_run_context_pills_render(self) -> None:
         data = {
