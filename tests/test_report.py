@@ -117,6 +117,31 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("## Top networks (ASN)", md)
         self.assertIn("AS13335", md)
 
+    def test_census_section(self) -> None:
+        data = {
+            "total_responses": 1000,
+            "notes": {},
+            "field_counts": {"content-type": 1000},
+            "unprocessed_counts": {
+                "cf-ray": 900,
+                "x-amz-cf-id": 700,
+                "x-forwarded-for": 230,
+                "x-acme-novel": 12,
+            },
+            "field_bytes": {"cf-ray": 27000, "x-amz-cf-id": 35000},
+        }
+        html, md = self._render_both(data)
+        # Section heading + vendor attribution + class labels, both formats.
+        self.assertIn('id="header-census"', html)
+        self.assertIn("Non-Standard Header Census", html)
+        self.assertIn("cloudflare", html)
+        self.assertIn("cloudfront", html)
+        self.assertIn("By inferred vendor", html)
+        self.assertIn("de-facto", html)  # x-forwarded-for is well-known
+        self.assertIn("## Non-Standard Header Census", md)
+        self.assertIn("By inferred vendor", md)
+        self.assertIn("cf-ray", md)
+
     def test_infra_truncation_notes_sync(self) -> None:
         # When the per-layer / ASN tables were trimmed during shuffle, BOTH
         # the HTML and Markdown reports must footnote the elision (CLAUDE.md
@@ -172,8 +197,8 @@ class TestRenderer(unittest.TestCase):
             },
         }
         html = self._render(data)
-        # The warning appears at least once per affected section (headers,
-        # unprocessed, and per-note vars).
+        # The warning appears at least once per affected section (top headers
+        # by count, the non-standard header census, and per-note vars).
         self.assertGreaterEqual(html.count("long tail"), 3)
         self.assertIn('class="muted truncated"', html)
 

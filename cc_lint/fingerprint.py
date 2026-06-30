@@ -57,6 +57,10 @@ class _Layer:
     role: str
     signals: Tuple[_Signal, ...]
     asns: frozenset[int]
+    # Header-name prefixes owned by this vendor's namespace, used by the
+    # non-standard header census for name-based vendor attribution. They play
+    # no part in response fingerprinting (``match`` ignores them).
+    name_prefixes: Tuple[str, ...]
 
 
 class Fingerprinter:
@@ -71,6 +75,22 @@ class Fingerprinter:
         for layer in layers:
             for asn in layer.asns:
                 self.asn_to_layer.setdefault(asn, layer.id)
+        # Name-based vendor attribution for the non-standard header census
+        # (#12). Exact header-name presence signals (no contains/regex) and
+        # explicit name_prefixes both map a header name to a vendor layer.
+        # First layer wins on a collision; prefixes are tried longest-first so
+        # x-amz-cf- (cloudfront) beats a hypothetical shorter x-amz- rule.
+        self._vendor_exact: Dict[str, str] = {}
+        prefixes: List[Tuple[str, str]] = []
+        for layer in layers:
+            for signal in layer.signals:
+                if signal.contains is None and signal.regex is None:
+                    self._vendor_exact.setdefault(signal.header, layer.id)
+            for prefix in layer.name_prefixes:
+                prefixes.append((prefix, layer.id))
+        self._vendor_prefixes: Tuple[Tuple[str, str], ...] = tuple(
+            sorted(prefixes, key=lambda item: len(item[0]), reverse=True)
+        )
 
     @property
     def layer_ids(self) -> List[str]:
@@ -97,6 +117,22 @@ class Fingerprinter:
                     matched.add(layer.id)
                     break
         return matched
+
+    def vendor_for_name(self, name: str) -> Optional[str]:
+        """Best-effort vendor layer id for a (lowercased) header name.
+
+        Attribution is purely lexical -- an exact match against a vendor's
+        presence-signal header names, then the longest matching name prefix.
+        It never inspects response data, so it works on the merged
+        report-time header dicts. Returns ``None`` for an unattributed name.
+        """
+        exact = self._vendor_exact.get(name)
+        if exact is not None:
+            return exact
+        for prefix, layer_id in self._vendor_prefixes:
+            if name.startswith(prefix):
+                return layer_id
+        return None
 
 
 def _parse_signal(raw: Dict[str, Any], layer_id: str) -> _Signal:
@@ -148,7 +184,22 @@ def _parse_layer(raw: Dict[str, Any]) -> _Layer:
         raise ValueError(
             f"fingerprint layer {layer_id!r}: needs at least one signal or asn"
         )
-    return _Layer(id=layer_id, role=role, signals=signals, asns=asns)
+    raw_prefixes = raw.get("name_prefixes", [])
+    if not isinstance(raw_prefixes, list) or not all(
+        isinstance(p, str) and p for p in raw_prefixes
+    ):
+        raise ValueError(
+            f"fingerprint layer {layer_id!r}: 'name_prefixes' must be "
+            "an array of non-empty strings"
+        )
+    name_prefixes = tuple(p.lower() for p in raw_prefixes)
+    return _Layer(
+        id=layer_id,
+        role=role,
+        signals=signals,
+        asns=asns,
+        name_prefixes=name_prefixes,
+    )
 
 
 def load_fingerprinter(path: Optional[str] = None) -> Fingerprinter:

@@ -1,2 +1,3 @@
 include cc_lint/py.typed
 include cc_lint/fingerprints.toml
+include cc_lint/header_families.toml

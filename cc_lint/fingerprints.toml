@@ -16,11 +16,20 @@
 # vendor-namespaced header (cf-ray, x-amz-cf-id, x-vercel-id, ...) is strong;
 # Server / X-Powered-By value matches are operator-settable and weaker. Tune
 # this table from real data rather than treating any match as authoritative.
+#
+# `name_prefixes` (optional): lowercased header-name prefixes owned by this
+# vendor's namespace (e.g. "cf-", "x-vercel-"). These do NOT fingerprint a
+# response -- match() ignores them -- they exist only so the non-standard
+# header census (issue #12) can attribute an arbitrary proprietary header
+# name to a vendor by name, reusing this one signal table so the census and
+# the #4 infrastructure section agree on vendor identity. Keep prefixes
+# specific enough not to collide across vendors.
 
 [[layer]]
 id = "cloudflare"
 role = "cdn"
 asns = [13335]
+name_prefixes = ["cf-"]
 signals = [
   { header = "cf-ray" },
   { header = "cf-cache-status" },
@@ -30,6 +39,9 @@ signals = [
 [[layer]]
 id = "cloudfront"
 role = "cdn"
+# x-amz-cf-* is CloudFront's edge namespace; bare x-amz-* (S3, API Gateway,
+# ...) is general AWS and deliberately left unattributed here.
+name_prefixes = ["x-amz-cf-"]
 signals = [
   { header = "x-amz-cf-id" },
   { header = "x-amz-cf-pop" },
@@ -56,6 +68,7 @@ role = "cdn"
 # header-only: their ASNs are shared general-purpose AWS/Microsoft networks,
 # so matching by ASN would conflate plain hosting with the CDN/edge.)
 asns = [20940, 16625, 32787, 21342]
+name_prefixes = ["akamai-", "x-akamai-"]
 signals = [
   { header = "akamai-grn" },
   { header = "x-akamai-transformed" },
@@ -66,6 +79,7 @@ signals = [
 [[layer]]
 id = "vercel"
 role = "platform"
+name_prefixes = ["x-vercel-"]
 signals = [
   { header = "x-vercel-id" },
   { header = "x-vercel-cache" },
@@ -74,6 +88,7 @@ signals = [
 [[layer]]
 id = "azure-front-door"
 role = "cdn"
+name_prefixes = ["x-azure-"]
 signals = [
   { header = "x-azure-ref" },
 ]
@@ -81,6 +96,7 @@ signals = [
 [[layer]]
 id = "envoy"
 role = "mesh"
+name_prefixes = ["x-envoy-"]
 signals = [
   { header = "x-envoy-upstream-service-time" },
 ]
@@ -102,6 +118,7 @@ signals = [
 [[layer]]
 id = "nextjs"
 role = "framework"
+name_prefixes = ["x-nextjs-"]
 signals = [
   { header = "x-powered-by", contains = "next.js" },
   { header = "x-nextjs-cache" },
@@ -110,6 +127,7 @@ signals = [
 [[layer]]
 id = "nuxt"
 role = "framework"
+name_prefixes = ["x-nuxt-"]
 signals = [
   { header = "x-powered-by", contains = "nuxt" },
 ]
